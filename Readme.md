@@ -56,8 +56,8 @@
 
 ## 3\. 技术架构
 
-  * **开发环境:** PlatformIO
-  * **核心框架:** Arduino `ESP32-S3FH4R2`
+  * **开发环境:** ESP-IDF
+  * **核心框架:** FreeRTOS `ESP32-S3FH4R2`
   * **UI:** `LVGL` (图形库) + `LovyanGFX` (显示驱动)
   * **核心组件:**
       * **显示:** 通过高速SPI驱动 `ST7789` LCD。
