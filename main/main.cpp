@@ -64,11 +64,14 @@ static bool init_i2c(void) {
 
 // Key event handler
 static void key_event_handler(KeyEvent event) {
-    AppMode current_mode = ui_manager_get_mode();
+    // Temporarily disable mode switching to prevent crashes during debugging
+    // AppMode current_mode = ui_manager_get_mode();
     
     switch (event) {
         case KEY_SHORT_PRESS:
-            // Switch mode (cycle through: BC -> Logger -> PBox -> GNSS Info -> BC)
+            ESP_LOGI(TAG, "KEY: Short press");
+            // Mode switching disabled temporarily
+            /*
             switch (current_mode) {
                 case MODE_BIKE_COMPUTER:
                     ui_manager_switch_mode(MODE_GPS_LOGGER);
@@ -86,32 +89,35 @@ static void key_event_handler(KeyEvent event) {
                     ui_manager_switch_mode(MODE_BIKE_COMPUTER);
                     break;
             }
-            ESP_LOGI(TAG, "Short press: mode switch");
+            */
             break;
             
         case KEY_MEDIUM_PRESS:
-            // Start/stop recording
+            ESP_LOGI(TAG, "KEY: Medium press");
+            // Recording control disabled temporarily
+            /*
             if (gps_logger_is_logging()) {
                 gps_logger_stop();
-                ESP_LOGI(TAG, "Recording stopped");
             } else {
                 gps_logger_start();
-                ESP_LOGI(TAG, "Recording started");
             }
+            */
             break;
             
         case KEY_LONG_PRESS:
-            // Enter/exit settings
+            ESP_LOGI(TAG, "KEY: Long press");
+            // Settings toggle disabled temporarily
+            /*
             if (current_mode == MODE_SETTINGS) {
                 ui_manager_switch_mode(MODE_BIKE_COMPUTER);
             } else {
                 ui_manager_switch_mode(MODE_SETTINGS);
             }
-            ESP_LOGI(TAG, "Long press: settings toggle");
+            */
             break;
             
         case KEY_DOUBLE_CLICK:
-            ESP_LOGI(TAG, "Double click");
+            ESP_LOGI(TAG, "KEY: Double click");
             break;
             
         default:
@@ -238,7 +244,7 @@ extern "C" void app_main(void) {
     
     // Start tasks
     xTaskCreate(app_task, "app", STACK_SIZE_UI, NULL, TASK_PRIORITY_UI, NULL);
-    xTaskCreate(rtc_sync_task, "rtc_sync", 2048, NULL, 2, NULL);
+    xTaskCreate(rtc_sync_task, "rtc_sync", 4096, NULL, 2, NULL);  // Increased from 2048 to 4096 to prevent stack overflow
     diagnostics_start_task();
     
     ESP_LOGI(TAG, "System started successfully!");

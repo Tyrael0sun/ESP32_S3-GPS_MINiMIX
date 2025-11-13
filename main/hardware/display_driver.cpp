@@ -6,9 +6,9 @@
 #include "display_driver.h"
 #include "config.h"
 #include "esp_log.h"
-#include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 
 static const char* TAG = "DISP";
 
@@ -24,7 +24,8 @@ bool display_init(void) {
         .duty_resolution = LEDC_TIMER_8_BIT,
         .timer_num = LEDC_TIMER_0,
         .freq_hz = DISP_BL_FREQ_HZ,
-        .clk_cfg = LEDC_AUTO_CLK
+        .clk_cfg = LEDC_AUTO_CLK,
+        .deconfigure = false
     };
     ret = ledc_timer_config(&ledc_timer);
     if (ret != ESP_OK) {
@@ -39,7 +40,10 @@ bool display_init(void) {
         .intr_type = LEDC_INTR_DISABLE,
         .timer_sel = LEDC_TIMER_0,
         .duty = (DISP_BL_DEFAULT_DUTY * 255) / 100,
-        .hpoint = 0
+        .hpoint = 0,
+        .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
+        .flags = {},
+        .deconfigure = false
     };
     ret = ledc_channel_config(&ledc_channel);
     if (ret != ESP_OK) {
@@ -48,14 +52,16 @@ bool display_init(void) {
     }
     
     // Configure SPI bus
-    spi_bus_config_t buscfg = {
-        .mosi_io_num = DISP_MOSI_GPIO,
-        .miso_io_num = -1,
-        .sclk_io_num = DISP_SCK_GPIO,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = DISP_WIDTH * DISP_HEIGHT * 2
-    };
+    spi_bus_config_t buscfg = {};
+    buscfg.mosi_io_num = DISP_MOSI_GPIO;
+    buscfg.miso_io_num = -1;
+    buscfg.sclk_io_num = DISP_SCK_GPIO;
+    buscfg.quadwp_io_num = -1;
+    buscfg.quadhd_io_num = -1;
+    buscfg.max_transfer_sz = DISP_WIDTH * DISP_HEIGHT * 2;
+    buscfg.flags = 0;
+    buscfg.isr_cpu_id = ESP_INTR_CPU_AFFINITY_AUTO;
+    buscfg.intr_flags = 0;
     ret = spi_bus_initialize(DISP_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize SPI bus");

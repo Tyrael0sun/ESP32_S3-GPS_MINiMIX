@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include <sys/time.h>
 #include <string.h>
+#include <cstdio>
 
 static const char* TAG = "RTC";
 
@@ -15,7 +16,7 @@ static bool time_synced = false;
 
 bool rtc_init(void) {
     // Set initial time to compile time
-    struct tm compile_time = {0};
+    struct tm compile_time = {};
     
     // Parse __DATE__ and __TIME__ macros
     const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -36,7 +37,9 @@ bool rtc_init(void) {
     
     // Set system time
     time_t t = mktime(&compile_time);
-    struct timeval tv = {.tv_sec = t, .tv_usec = 0};
+    struct timeval tv = {};
+    tv.tv_sec = t;
+    tv.tv_usec = 0;
     settimeofday(&tv, NULL);
     
     ESP_LOGI(TAG, "RTC initialized with compile time: %s", asctime(&compile_time));
@@ -56,7 +59,7 @@ bool rtc_sync_with_gps(void) {
         return false;
     }
     
-    struct tm gps_time = {0};
+    struct tm gps_time = {};
     gps_time.tm_year = gps.year - 1900;
     gps_time.tm_mon = gps.month - 1;
     gps_time.tm_mday = gps.day;
@@ -65,7 +68,9 @@ bool rtc_sync_with_gps(void) {
     gps_time.tm_sec = gps.second;
     
     time_t t = mktime(&gps_time);
-    struct timeval tv = {.tv_sec = t, .tv_usec = 0};
+    struct timeval tv = {};
+    tv.tv_sec = t;
+    tv.tv_usec = 0;
     settimeofday(&tv, NULL);
     
     time_synced = true;
@@ -90,7 +95,9 @@ bool rtc_set_time(const struct tm* timeinfo) {
     if (!timeinfo) return false;
     
     time_t t = mktime((struct tm*)timeinfo);
-    struct timeval tv = {.tv_sec = t, .tv_usec = 0};
+    struct timeval tv = {};
+    tv.tv_sec = t;
+    tv.tv_usec = 0;
     settimeofday(&tv, NULL);
     
     ESP_LOGI(TAG, "RTC time set manually");

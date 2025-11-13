@@ -8,10 +8,12 @@
 #include "../hardware/gnss_driver.h"
 #include "../core/sensor_fusion.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char* TAG = "PBOX_APP";
 
-static PBoxData app_data = {0};
+static PBoxData app_data = {};
 static uint32_t test_start_time = 0;
 
 void pbox_init(void) {
@@ -52,14 +54,16 @@ void pbox_update(void) {
             break;
             
         case PBOX_TESTING:
-            // Calculate elapsed time
-            uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
-            app_data.test_time = (now - test_start_time) / 1000.0f;
-            
-            // Check if target speed reached
-            if (app_data.current_speed >= app_data.target_speed) {
-                app_data.state = PBOX_FINISHED;
-                ESP_LOGI(TAG, "Test finished! Time: %.3f s", app_data.test_time);
+            {
+                // Calculate elapsed time
+                uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+                app_data.test_time = (now - test_start_time) / 1000.0f;
+                
+                // Check if target speed reached
+                if (app_data.current_speed >= app_data.target_speed) {
+                    app_data.state = PBOX_FINISHED;
+                    ESP_LOGI(TAG, "Test finished! Time: %.3f s", app_data.test_time);
+                }
             }
             break;
             

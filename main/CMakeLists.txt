@@ -33,6 +33,11 @@ idf_component_register(
         "utils"
     REQUIRES 
         driver
+        esp_driver_ledc
+        esp_driver_uart
+        esp_driver_spi
+        esp_driver_gpio
+        esp_driver_pcnt
         esp_timer
         nvs_flash
         sdmmc

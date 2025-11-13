@@ -11,7 +11,7 @@
 
 static const char* TAG = "BC_APP";
 
-static BikeComputerData app_data = {0};
+static BikeComputerData app_data = {};
 
 void bike_computer_init(void) {
     app_data.current_speed = 0.0f;

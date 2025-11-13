@@ -9,6 +9,8 @@
 #include "../hardware/baro_driver.h"
 #include "sensor_fusion.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <time.h>
 #include <sys/stat.h>
@@ -40,7 +42,7 @@ static float calculate_distance(double lat1, double lon1, double lat2, double lo
 
 bool gps_logger_init(void) {
     // Create GPX directory if it doesn't exist
-    struct stat st = {0};
+    struct stat st = {};
     if (stat(GPX_DIR, &st) == -1) {
         mkdir(GPX_DIR, 0700);
     }

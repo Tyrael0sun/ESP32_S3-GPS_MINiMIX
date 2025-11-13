@@ -14,7 +14,7 @@
 static const char* TAG = "GNSS";
 
 static bool gnss_initialized = false;
-static GnssData latest_data = {0};
+static GnssData latest_data = {};
 static QueueHandle_t uart_queue = NULL;
 
 // NMEA parser helper
@@ -38,14 +38,13 @@ bool gnss_init(void) {
     vTaskDelay(pdMS_TO_TICKS(100)); // Wait for power up
     
     // Configure UART
-    uart_config_t uart_config = {
-        .baud_rate = GNSS_UART_BAUDRATE,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT
-    };
+    uart_config_t uart_config = {};
+    uart_config.baud_rate = GNSS_UART_BAUDRATE;
+    uart_config.data_bits = UART_DATA_8_BITS;
+    uart_config.parity = UART_PARITY_DISABLE;
+    uart_config.stop_bits = UART_STOP_BITS_1;
+    uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+    uart_config.source_clk = UART_SCLK_DEFAULT;
     
     ESP_ERROR_CHECK(uart_driver_install(GNSS_UART_NUM, 2048, 2048, 20, &uart_queue, 0));
     ESP_ERROR_CHECK(uart_param_config(GNSS_UART_NUM, &uart_config));

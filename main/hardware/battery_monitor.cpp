@@ -19,36 +19,32 @@ static bool adc_initialized = false;
 
 bool battery_init(void) {
     // Configure ADC
-    adc_oneshot_unit_init_cfg_t init_config = {
-        .unit_id = BAT_ADC_UNIT,
-    };
+    adc_oneshot_unit_init_cfg_t init_config = {};
+    init_config.unit_id = BAT_ADC_UNIT;
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle));
     
-    adc_oneshot_chan_cfg_t config = {
-        .atten = ADC_ATTEN_DB_11,
-        .bitwidth = ADC_BITWIDTH_12,
-    };
+    adc_oneshot_chan_cfg_t config = {};
+    config.atten = ADC_ATTEN_DB_12;
+    config.bitwidth = ADC_BITWIDTH_12;
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, BAT_ADC_CHANNEL, &config));
     
     // Calibration
-    adc_cali_line_fitting_config_t cali_config = {
-        .unit_id = BAT_ADC_UNIT,
-        .atten = ADC_ATTEN_DB_11,
-        .bitwidth = ADC_BITWIDTH_12,
-    };
-    esp_err_t ret = adc_cali_create_scheme_line_fitting(&cali_config, &adc_cali_handle);
+    adc_cali_curve_fitting_config_t cali_config = {};
+    cali_config.unit_id = BAT_ADC_UNIT;
+    cali_config.atten = ADC_ATTEN_DB_12;
+    cali_config.bitwidth = ADC_BITWIDTH_12;
+    esp_err_t ret = adc_cali_create_scheme_curve_fitting(&cali_config, &adc_cali_handle);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "ADC calibration successful");
     }
     
     // Configure charging status GPIO
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << CHRG_STATUS_GPIO),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE
-    };
+    gpio_config_t io_conf = {};
+    io_conf.pin_bit_mask = (1ULL << CHRG_STATUS_GPIO);
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.intr_type = GPIO_INTR_DISABLE;
     gpio_config(&io_conf);
     
     adc_initialized = true;

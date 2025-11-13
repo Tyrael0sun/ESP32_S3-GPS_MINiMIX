@@ -11,7 +11,7 @@
 
 static const char* TAG = "FUSION";
 
-static FusedData fused_data = {0};
+static FusedData fused_data = {};
 static bool fusion_initialized = false;
 
 // Complementary filter coefficients

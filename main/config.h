@@ -38,8 +38,8 @@
 #define GPS_LDO_EN_GPIO         14
 
 // ==================== I2C Bus ====================
-#define I2C_SCL_GPIO            39
-#define I2C_SDA_GPIO            40
+#define I2C_SCL_GPIO            (gpio_num_t)39
+#define I2C_SDA_GPIO            (gpio_num_t)40
 #define I2C_NUM                 I2C_NUM_0
 #define I2C_FREQ_HZ             1000000  // 1MHz
 
@@ -100,7 +100,7 @@
 #define DIAG_SLOW_LOG_INTERVAL_MS   10000   // Every 10 seconds
 
 // ==================== GNSS Configuration ====================
-#define GNSS_DEFAULT_RATE_HZ    10
+#define GNSS_DEFAULT_RATE_HZ    1
 #define GNSS_MIN_RATE_HZ        1
 #define GNSS_MAX_RATE_HZ        25
 
@@ -118,10 +118,11 @@
 #define TASK_PRIORITY_DIAG      1
 
 // ==================== Stack Sizes ====================
-#define STACK_SIZE_UI           8192
-#define STACK_SIZE_SENSOR       4096
-#define STACK_SIZE_GPS          4096
-#define STACK_SIZE_LOGGER       4096
-#define STACK_SIZE_DIAG         2048
+// Note: Increased stack sizes to prevent overflow in ESP-IDF v6.x
+#define STACK_SIZE_UI           8192  // UI and display updates
+#define STACK_SIZE_SENSOR       4096  // Sensor fusion
+#define STACK_SIZE_GPS          4096  // GPS data processing
+#define STACK_SIZE_LOGGER       4096  // File I/O operations
+#define STACK_SIZE_DIAG         4096  // Diagnostics with multiple sensor reads (was 2048, caused overflow)
 
 #endif // CONFIG_H

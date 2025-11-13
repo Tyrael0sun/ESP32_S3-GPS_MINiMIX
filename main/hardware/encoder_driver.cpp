@@ -11,12 +11,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
+#include "freertos/queue.h"
 
 static const char* TAG = "ENCODER";
 
 static pcnt_unit_handle_t pcnt_unit = NULL;
 static encoder_callback_t encoder_cb = NULL;
 static key_callback_t key_cb = NULL;
+static QueueHandle_t key_event_queue = NULL;
 
 // Button state tracking
 static uint32_t button_press_time = 0;
@@ -30,9 +32,22 @@ static int32_t last_encoder_count = 0;
 static uint32_t last_encoder_change_time = 0;
 #define ENCODER_DEBOUNCE_MS     500
 
+// Key event processing task
+static void key_event_task(void* arg) {
+    KeyEvent event;
+    while (1) {
+        if (xQueueReceive(key_event_queue, &event, portMAX_DELAY)) {
+            if (key_cb) {
+                key_cb(event);
+            }
+        }
+    }
+}
+
 static void IRAM_ATTR key_isr_handler(void* arg) {
     uint32_t now = xTaskGetTickCountFromISR() * portTICK_PERIOD_MS;
     int level = gpio_get_level((gpio_num_t)KEY_MAIN_GPIO);
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     
     if (level == 0) { // Button pressed (active low with pull-up)
         if (!button_pressed && (now - button_release_time) > KEY_DEBOUNCE_MS) {
@@ -40,7 +55,6 @@ static void IRAM_ATTR key_isr_handler(void* arg) {
             button_press_time = now;
             
             // Start long press timer
-            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
             if (long_press_timer) {
                 xTimerStartFromISR(long_press_timer, &xHigherPriorityTaskWoken);
             }
@@ -52,39 +66,44 @@ static void IRAM_ATTR key_isr_handler(void* arg) {
             uint32_t press_duration = button_release_time - button_press_time;
             
             // Stop long press timer
-            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
             if (long_press_timer) {
                 xTimerStopFromISR(long_press_timer, &xHigherPriorityTaskWoken);
             }
             
-            // Determine event type
+            // Determine event type and send to queue (ISR-safe)
+            KeyEvent event;
+            bool send_event = false;
+            
             if (press_duration >= KEY_LONG_PRESS_MS) {
                 // Already handled by timer
             } else if (press_duration >= KEY_MEDIUM_PRESS_MS) {
-                if (key_cb) {
-                    key_cb(KEY_MEDIUM_PRESS);
-                }
+                event = KEY_MEDIUM_PRESS;
+                send_event = true;
             } else if (press_duration < KEY_SHORT_PRESS_MS) {
                 // Check for double click
                 if ((now - last_click_time) < KEY_DOUBLE_CLICK_MS) {
-                    if (key_cb) {
-                        key_cb(KEY_DOUBLE_CLICK);
-                    }
+                    event = KEY_DOUBLE_CLICK;
                     last_click_time = 0; // Reset to avoid triple click
                 } else {
+                    event = KEY_SHORT_PRESS;
                     last_click_time = now;
-                    if (key_cb) {
-                        key_cb(KEY_SHORT_PRESS);
-                    }
                 }
+                send_event = true;
+            }
+            
+            if (send_event && key_event_queue) {
+                xQueueSendFromISR(key_event_queue, &event, &xHigherPriorityTaskWoken);
             }
         }
     }
+    
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 static void long_press_timer_callback(TimerHandle_t xTimer) {
-    if (button_pressed && key_cb) {
-        key_cb(KEY_LONG_PRESS);
+    if (button_pressed && key_event_queue) {
+        KeyEvent event = KEY_LONG_PRESS;
+        xQueueSend(key_event_queue, &event, 0);
     }
 }
 
@@ -92,20 +111,18 @@ bool encoder_init(void) {
     esp_err_t ret;
     
     // Configure PCNT for encoder
-    pcnt_unit_config_t unit_config = {
-        .low_limit = -32768,
-        .high_limit = 32767,
-    };
+    pcnt_unit_config_t unit_config = {};
+    unit_config.low_limit = -32768;
+    unit_config.high_limit = 32767;
     ret = pcnt_new_unit(&unit_config, &pcnt_unit);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create PCNT unit");
         return false;
     }
     
-    pcnt_chan_config_t chan_a_config = {
-        .edge_gpio_num = ENC_A_GPIO,
-        .level_gpio_num = ENC_B_GPIO,
-    };
+    pcnt_chan_config_t chan_a_config = {};
+    chan_a_config.edge_gpio_num = ENC_A_GPIO;
+    chan_a_config.level_gpio_num = ENC_B_GPIO;
     pcnt_channel_handle_t pcnt_chan_a = NULL;
     ret = pcnt_new_channel(pcnt_unit, &chan_a_config, &pcnt_chan_a);
     if (ret != ESP_OK) {
@@ -113,10 +130,9 @@ bool encoder_init(void) {
         return false;
     }
     
-    pcnt_chan_config_t chan_b_config = {
-        .edge_gpio_num = ENC_B_GPIO,
-        .level_gpio_num = ENC_A_GPIO,
-    };
+    pcnt_chan_config_t chan_b_config = {};
+    chan_b_config.edge_gpio_num = ENC_B_GPIO;
+    chan_b_config.level_gpio_num = ENC_A_GPIO;
     pcnt_channel_handle_t pcnt_chan_b = NULL;
     ret = pcnt_new_channel(pcnt_unit, &chan_b_config, &pcnt_chan_b);
     if (ret != ESP_OK) {
@@ -152,6 +168,18 @@ bool encoder_init(void) {
     // Create long press timer
     long_press_timer = xTimerCreate("LongPress", pdMS_TO_TICKS(KEY_LONG_PRESS_MS), 
                                      pdFALSE, NULL, long_press_timer_callback);
+    
+    // Create key event queue and processing task
+    key_event_queue = xQueueCreate(10, sizeof(KeyEvent));
+    if (!key_event_queue) {
+        ESP_LOGE(TAG, "Failed to create key event queue");
+        return false;
+    }
+    
+    if (xTaskCreate(key_event_task, "key_event", 2048, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create key event task");
+        return false;
+    }
     
     ESP_LOGI(TAG, "Encoder and button initialized");
     return true;
