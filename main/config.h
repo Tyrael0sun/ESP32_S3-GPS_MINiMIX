@@ -35,6 +35,7 @@
 #define GNSS_RX_GPIO            18
 #define GNSS_UART_NUM           UART_NUM_1
 #define GNSS_UART_BAUDRATE      115200
+#define GNSS_UART_BAUDRATE_INIT 9600  // Initial baudrate for configuration
 #define GPS_LDO_EN_GPIO         14
 
 // ==================== I2C Bus ====================
@@ -97,7 +98,7 @@
 // ==================== Diagnostics ====================
 #define DIAG_FAST_LOG_DURATION_MS   5000    // 5 seconds
 #define DIAG_FAST_LOG_INTERVAL_MS   1000    // Every 1 second
-#define DIAG_SLOW_LOG_INTERVAL_MS   10000   // Every 10 seconds
+#define DIAG_SLOW_LOG_INTERVAL_MS   5000    // Every 5 seconds
 
 // ==================== GNSS Configuration ====================
 #define GNSS_DEFAULT_RATE_HZ    1

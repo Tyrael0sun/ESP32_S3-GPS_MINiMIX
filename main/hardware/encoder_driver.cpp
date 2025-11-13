@@ -27,10 +27,11 @@ static uint32_t last_click_time = 0;
 static bool button_pressed = false;
 static TimerHandle_t long_press_timer = NULL;
 
-// Encoder debounce mechanism (500ms auto-clear)
+// Encoder sensitivity settings
 static int32_t last_encoder_count = 0;
 static uint32_t last_encoder_change_time = 0;
-#define ENCODER_DEBOUNCE_MS     500
+#define ENCODER_STEP_THRESHOLD  3       // 3 steps = 1 operation
+#define ENCODER_AUTO_CLEAR_MS   500     // Auto-clear after 500ms
 
 // Key event processing task
 static void key_event_task(void* arg) {
@@ -110,6 +111,22 @@ static void long_press_timer_callback(TimerHandle_t xTimer) {
 bool encoder_init(void) {
     esp_err_t ret;
     
+    // Configure encoder GPIO pins with pull-up resistors BEFORE PCNT
+    gpio_config_t enc_io_conf = {
+        .pin_bit_mask = (1ULL << ENC_A_GPIO) | (1ULL << ENC_B_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    ret = gpio_config(&enc_io_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure encoder GPIOs");
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "Encoder GPIOs configured: GPIO%d (A), GPIO%d (B) with pull-up", ENC_A_GPIO, ENC_B_GPIO);
+    
     // Configure PCNT for encoder
     pcnt_unit_config_t unit_config = {};
     unit_config.low_limit = -32768;
@@ -151,6 +168,8 @@ bool encoder_init(void) {
     pcnt_unit_enable(pcnt_unit);
     pcnt_unit_start(pcnt_unit);
     
+    ESP_LOGI(TAG, "PCNT unit initialized and started");
+    
     // Configure button GPIO
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << KEY_MAIN_GPIO),
@@ -176,12 +195,16 @@ bool encoder_init(void) {
         return false;
     }
     
-    if (xTaskCreate(key_event_task, "key_event", 2048, NULL, 5, NULL) != pdPASS) {
+    // Increased stack size from 2048 to 4096 to handle diagnostics_trigger() calls
+    if (xTaskCreate(key_event_task, "key_event", 4096, NULL, 5, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create key event task");
         return false;
     }
     
-    ESP_LOGI(TAG, "Encoder and button initialized");
+    ESP_LOGI(TAG, "Encoder and button initialized successfully");
+    ESP_LOGI(TAG, "  Encoder: GPIO%d (A), GPIO%d (B)", ENC_A_GPIO, ENC_B_GPIO);
+    ESP_LOGI(TAG, "  Button: GPIO%d", KEY_MAIN_GPIO);
+    ESP_LOGI(TAG, "Rotate encoder to test...");
     return true;
 }
 
@@ -198,20 +221,34 @@ int32_t encoder_get_count(void) {
     if (pcnt_unit) {
         pcnt_unit_get_count(pcnt_unit, &count);
         
-        // Auto-clear count after 500ms of inactivity (debounce)
         uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        
+        // Auto-clear if no change for 500ms
+        if (count != 0 && count == last_encoder_count) {
+            if ((now - last_encoder_change_time) > ENCODER_AUTO_CLEAR_MS) {
+                ESP_LOGD(TAG, "Encoder auto-clear: %d", count);
+                pcnt_unit_clear_count(pcnt_unit);
+                last_encoder_count = 0;
+                return 0;
+            }
+        }
+        
+        // Update tracking
         if (count != last_encoder_count) {
             last_encoder_count = count;
             last_encoder_change_time = now;
-        } else if (count != 0 && (now - last_encoder_change_time) > ENCODER_DEBOUNCE_MS) {
-            // Clear count after 500ms of no change
-            pcnt_unit_clear_count(pcnt_unit);
-            last_encoder_count = 0;
-            count = 0;
-            ESP_LOGD(TAG, "Encoder count auto-cleared after %dms timeout", ENCODER_DEBOUNCE_MS);
+        }
+        
+        // Apply threshold: need 3 steps to register
+        if (count >= ENCODER_STEP_THRESHOLD) {
+            ESP_LOGD(TAG, "Encoder threshold reached: %d -> +1", count);
+            return 1;  // Clockwise
+        } else if (count <= -ENCODER_STEP_THRESHOLD) {
+            ESP_LOGD(TAG, "Encoder threshold reached: %d -> -1", count);
+            return -1; // Counter-clockwise
         }
     }
-    return count;
+    return 0;
 }
 
 void encoder_reset_count(void) {

@@ -43,4 +43,6 @@ idf_component_register(
         sdmmc
         fatfs
         esp_adc
+        esp_lcd
+        lvgl__lvgl
 )

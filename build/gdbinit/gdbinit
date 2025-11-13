@@ -1,0 +1,2 @@
+source /workspaces/ESP32_S3-GPS_MINiMIX/build/gdbinit/symbols
+source /workspaces/ESP32_S3-GPS_MINiMIX/build/gdbinit/connect

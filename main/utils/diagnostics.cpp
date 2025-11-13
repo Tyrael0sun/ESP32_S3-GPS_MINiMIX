@@ -118,3 +118,8 @@ void diagnostics_start_task(void) {
                 TASK_PRIORITY_DIAG, &diag_task_handle);
     ESP_LOGI(TAG, "Diagnostics task started");
 }
+
+void diagnostics_trigger(const char* reason) {
+    ESP_LOGI(TAG, "=== TRIGGERED: %s ===", reason ? reason : "Manual");
+    diagnostics_run();
+}

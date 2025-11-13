@@ -18,15 +18,11 @@ static const char* TAG = "UI_MGR";
 static AppMode current_mode = MODE_BIKE_COMPUTER;
 
 bool ui_manager_init(void) {
-    // Initialize display
+    // Initialize display (includes LVGL initialization)
     if (!display_init()) {
         ESP_LOGE(TAG, "Failed to initialize display");
         return false;
     }
-    
-    // TODO: Initialize LVGL
-    // lv_init();
-    // lv_port_disp_init();
     
     // Initialize status bar
     ui_statusbar_init();
@@ -34,16 +30,16 @@ bool ui_manager_init(void) {
     // Initialize default mode (bike computer)
     ui_bike_computer_init();
     
-    ESP_LOGI(TAG, "UI manager initialized");
+    ESP_LOGI(TAG, "UI manager initialized with LVGL");
     return true;
 }
 
 void ui_manager_switch_mode(AppMode mode) {
     if (mode == current_mode) return;
     
-    ESP_LOGI(TAG, "Switching to mode %d", mode);
+    ESP_LOGI(TAG, "Switching from mode %d to mode %d", current_mode, mode);
     
-    // Deinit current mode
+    // Deinit current mode (but keep status bar)
     switch (current_mode) {
         case MODE_BIKE_COMPUTER:
             ui_bike_computer_deinit();
@@ -62,8 +58,13 @@ void ui_manager_switch_mode(AppMode mode) {
             break;
     }
     
-    // Init new mode
+    // Update current mode
     current_mode = mode;
+    
+    // Re-initialize status bar (will auto-cleanup if exists)
+    ui_statusbar_init();
+    
+    // Init new mode
     switch (mode) {
         case MODE_BIKE_COMPUTER:
             ui_bike_computer_init();
@@ -81,6 +82,8 @@ void ui_manager_switch_mode(AppMode mode) {
             ui_settings_init();
             break;
     }
+    
+    ESP_LOGI(TAG, "Mode switch to %d complete", mode);
 }
 
 AppMode ui_manager_get_mode(void) {
@@ -110,8 +113,8 @@ void ui_manager_update(void) {
             break;
     }
     
-    // TODO: Call LVGL timer handler
-    // lv_timer_handler();
+    // Call LVGL timer handler
+    display_lvgl_handler();
 }
 
 void ui_manager_show_time_sync(void) {

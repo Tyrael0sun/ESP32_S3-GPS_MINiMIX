@@ -37,9 +37,9 @@ bool gnss_init(void) {
     
     vTaskDelay(pdMS_TO_TICKS(100)); // Wait for power up
     
-    // Configure UART
+    // Configure UART with initial baudrate (9600 - GPS module default)
     uart_config_t uart_config = {};
-    uart_config.baud_rate = GNSS_UART_BAUDRATE;
+    uart_config.baud_rate = GNSS_UART_BAUDRATE_INIT;  // Start with 9600
     uart_config.data_bits = UART_DATA_8_BITS;
     uart_config.parity = UART_PARITY_DISABLE;
     uart_config.stop_bits = UART_STOP_BITS_1;
@@ -51,7 +51,27 @@ bool gnss_init(void) {
     ESP_ERROR_CHECK(uart_set_pin(GNSS_UART_NUM, GNSS_TX_GPIO, GNSS_RX_GPIO, 
                                   UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     
-    ESP_LOGI(TAG, "GNSS module initialized");
+    ESP_LOGI(TAG, "GNSS UART initialized at %d baud", GNSS_UART_BAUDRATE_INIT);
+    
+    // Wait for GPS module to be ready
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    // Configure GPS module to use 115200 baud (NMEA command)
+    // PMTK command to set baudrate: $PMTK251,115200*1F\r\n
+    const char* baudrate_cmd = "$PMTK251,115200*1F\r\n";
+    uart_write_bytes(GNSS_UART_NUM, baudrate_cmd, strlen(baudrate_cmd));
+    uart_wait_tx_done(GNSS_UART_NUM, pdMS_TO_TICKS(100));
+    
+    ESP_LOGI(TAG, "Sent baudrate change command to GPS");
+    
+    // Wait for command to take effect
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Now switch ESP32 UART to 115200
+    uart_config.baud_rate = GNSS_UART_BAUDRATE;
+    ESP_ERROR_CHECK(uart_param_config(GNSS_UART_NUM, &uart_config));
+    
+    ESP_LOGI(TAG, "GNSS module initialized at %d baud", GNSS_UART_BAUDRATE);
     gnss_initialized = true;
     
     return true;

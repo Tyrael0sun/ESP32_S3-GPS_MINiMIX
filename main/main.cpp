@@ -64,60 +64,55 @@ static bool init_i2c(void) {
 
 // Key event handler
 static void key_event_handler(KeyEvent event) {
-    // Temporarily disable mode switching to prevent crashes during debugging
-    // AppMode current_mode = ui_manager_get_mode();
+    AppMode current_mode = ui_manager_get_mode();
+    char diag_reason[64];
     
     switch (event) {
         case KEY_SHORT_PRESS:
-            ESP_LOGI(TAG, "KEY: Short press");
-            // Mode switching disabled temporarily
-            /*
-            switch (current_mode) {
-                case MODE_BIKE_COMPUTER:
-                    ui_manager_switch_mode(MODE_GPS_LOGGER);
-                    break;
-                case MODE_GPS_LOGGER:
-                    ui_manager_switch_mode(MODE_PBOX);
-                    break;
-                case MODE_PBOX:
-                    ui_manager_switch_mode(MODE_GNSS_INFO);
-                    break;
-                case MODE_GNSS_INFO:
-                    ui_manager_switch_mode(MODE_BIKE_COMPUTER);
-                    break;
-                case MODE_SETTINGS:
-                    ui_manager_switch_mode(MODE_BIKE_COMPUTER);
-                    break;
-            }
-            */
+            ESP_LOGI(TAG, "KEY: Short press - Confirm/Next");
+            snprintf(diag_reason, sizeof(diag_reason), "Key: SHORT (Confirm/Next)");
+            diagnostics_trigger(diag_reason);
+            
+            // Short press: context-dependent action or next interface
+            // For now, just trigger diagnostics
+            // TODO: Add context-specific actions per interface
             break;
             
         case KEY_MEDIUM_PRESS:
-            ESP_LOGI(TAG, "KEY: Medium press");
-            // Recording control disabled temporarily
-            /*
+            ESP_LOGI(TAG, "KEY: Medium press - Start/Stop recording");
+            snprintf(diag_reason, sizeof(diag_reason), "Key: MEDIUM (Record toggle)");
+            diagnostics_trigger(diag_reason);
+            
+            // Medium press: Start/Stop GPS recording (works in most modes)
             if (gps_logger_is_logging()) {
                 gps_logger_stop();
+                ESP_LOGI(TAG, "GPS recording stopped");
             } else {
                 gps_logger_start();
+                ESP_LOGI(TAG, "GPS recording started");
             }
-            */
             break;
             
         case KEY_LONG_PRESS:
-            ESP_LOGI(TAG, "KEY: Long press");
-            // Settings toggle disabled temporarily
-            /*
+            ESP_LOGI(TAG, "KEY: Long press - Settings toggle");
+            snprintf(diag_reason, sizeof(diag_reason), "Key: LONG (Settings)");
+            diagnostics_trigger(diag_reason);
+            
+            // Long press: Toggle Settings menu
             if (current_mode == MODE_SETTINGS) {
                 ui_manager_switch_mode(MODE_BIKE_COMPUTER);
+                ESP_LOGI(TAG, "Exit Settings -> Bike Computer");
             } else {
                 ui_manager_switch_mode(MODE_SETTINGS);
+                ESP_LOGI(TAG, "Enter Settings");
             }
-            */
             break;
             
         case KEY_DOUBLE_CLICK:
-            ESP_LOGI(TAG, "KEY: Double click");
+            ESP_LOGI(TAG, "KEY: Double click - Reserved");
+            snprintf(diag_reason, sizeof(diag_reason), "Key: DOUBLE CLICK");
+            diagnostics_trigger(diag_reason);
+            // Reserved for future use
             break;
             
         default:
@@ -127,7 +122,65 @@ static void key_event_handler(KeyEvent event) {
 
 // Encoder rotation handler
 static void encoder_event_handler(int32_t count) {
-    ESP_LOGI(TAG, "Encoder: %ld", count);
+    AppMode current_mode = ui_manager_get_mode();
+    
+    ESP_LOGI(TAG, "Encoder: %ld (Mode: %d)", count, current_mode);
+    
+    char diag_reason[64];
+    snprintf(diag_reason, sizeof(diag_reason), "Encoder: %ld", count);
+    diagnostics_trigger(diag_reason);
+    
+    // Global navigation: rotate through interfaces
+    // Negative = previous, Positive = next
+    if (count < 0) {
+        // Rotate left: Previous interface
+        switch (current_mode) {
+            case MODE_BIKE_COMPUTER:
+                ui_manager_switch_mode(MODE_SETTINGS);
+                ESP_LOGI(TAG, "Switch: Bike Computer -> Settings");
+                break;
+            case MODE_GPS_LOGGER:
+                ui_manager_switch_mode(MODE_BIKE_COMPUTER);
+                ESP_LOGI(TAG, "Switch: GPS Logger -> Bike Computer");
+                break;
+            case MODE_PBOX:
+                ui_manager_switch_mode(MODE_GPS_LOGGER);
+                ESP_LOGI(TAG, "Switch: P-Box -> GPS Logger");
+                break;
+            case MODE_GNSS_INFO:
+                ui_manager_switch_mode(MODE_PBOX);
+                ESP_LOGI(TAG, "Switch: GNSS Info -> P-Box");
+                break;
+            case MODE_SETTINGS:
+                ui_manager_switch_mode(MODE_GNSS_INFO);
+                ESP_LOGI(TAG, "Switch: Settings -> GNSS Info");
+                break;
+        }
+    } else if (count > 0) {
+        // Rotate right: Next interface
+        switch (current_mode) {
+            case MODE_BIKE_COMPUTER:
+                ui_manager_switch_mode(MODE_GPS_LOGGER);
+                ESP_LOGI(TAG, "Switch: Bike Computer -> GPS Logger");
+                break;
+            case MODE_GPS_LOGGER:
+                ui_manager_switch_mode(MODE_PBOX);
+                ESP_LOGI(TAG, "Switch: GPS Logger -> P-Box");
+                break;
+            case MODE_PBOX:
+                ui_manager_switch_mode(MODE_GNSS_INFO);
+                ESP_LOGI(TAG, "Switch: P-Box -> GNSS Info");
+                break;
+            case MODE_GNSS_INFO:
+                ui_manager_switch_mode(MODE_SETTINGS);
+                ESP_LOGI(TAG, "Switch: GNSS Info -> Settings");
+                break;
+            case MODE_SETTINGS:
+                ui_manager_switch_mode(MODE_BIKE_COMPUTER);
+                ESP_LOGI(TAG, "Switch: Settings -> Bike Computer");
+                break;
+        }
+    }
 }
 
 // RTC sync task
@@ -159,6 +212,17 @@ static void app_task(void* arg) {
             
             // Update sensor fusion
             sensor_fusion_update(UPDATE_INTERVAL_MS / 1000.0f);
+            
+            // Increment LVGL tick
+            display_lvgl_tick();
+            
+            // Check encoder rotation and trigger callback
+            int32_t encoder_count = encoder_get_count();
+            if (encoder_count != 0) {
+                ESP_LOGI(TAG, "Encoder detected: count=%ld", encoder_count);
+                encoder_event_handler(encoder_count);
+                encoder_reset_count();  // Reset after handling
+            }
             
             // Update current app
             AppMode mode = ui_manager_get_mode();

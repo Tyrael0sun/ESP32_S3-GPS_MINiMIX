@@ -1,4 +1,4 @@
-# ESP32-S3 GPS MINiMIX 固件烧录指南
+i# ESP32-S3 GPS MINiMIX 固件烧录指南
 
 ## 固件文件说明
 

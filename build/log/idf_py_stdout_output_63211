@@ -1,0 +1,25 @@
+Command: ninja all
+[1/10] Performing build step for 'bootloader'
+[1/1] cd /workspaces/ESP32_S3-GPS_MINiMIX/build/bootloader && /home/codespace/.espressif/python_env/idf6.1_py3.12_env/bin/python /home/codespace/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /workspaces/ESP32_S3-GPS_MINiMIX/build/bootloader/bootloader.bin
+Bootloader binary size 0x5320 bytes. 0x2ce0 bytes (35%) free.
+[2/10] No install step for 'bootloader'
+[3/10] Completed 'bootloader'
+[4/10] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/hardware/encoder_driver.cpp.obj
+/workspaces/ESP32_S3-GPS_MINiMIX/main/hardware/encoder_driver.cpp:32:17: warning: 'last_encoder_change_time' defined but not used [-Wunused-variable]
+   32 | static uint32_t last_encoder_change_time = 0;
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~
+/workspaces/ESP32_S3-GPS_MINiMIX/main/hardware/encoder_driver.cpp:31:16: warning: 'last_encoder_count' defined but not used [-Wunused-variable]
+   31 | static int32_t last_encoder_count = 0;
+      |                ^~~~~~~~~~~~~~~~~~
+[5/10] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/main.cpp.obj
+[6/10] Linking C static library esp-idf/main/libmain.a
+[7/10] Generating esp-idf/esp_system/ld/sections.ld
+[8/10] Linking CXX executable esp32s3_gps_minimix.elf
+[9/10] Generating binary image from built executable
+esptool v5.1.0
+Creating ESP32S3 image...
+Merged 2 ELF sections.
+Successfully created ESP32S3 image.
+Generated /workspaces/ESP32_S3-GPS_MINiMIX/build/esp32s3_gps_minimix.bin
+[10/10] cd /workspaces/ESP32_S3-GPS_MINiMIX/build && /home/codespace/.espressif/python_env/idf6.1_py3.12_env/bin/python /home/codespace/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /workspaces/ESP32_S3-GPS_MINiMIX/build/partition_table/partition-table.bin /workspaces/ESP32_S3-GPS_MINiMIX/build/esp32s3_gps_minimix.bin
+esp32s3_gps_minimix.bin binary size 0xa1110 bytes. Smallest app partition is 0x100000 bytes. 0x5eef0 bytes (37%) free.

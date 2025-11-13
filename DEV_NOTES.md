@@ -2,18 +2,35 @@
 
 ## Recent Updates (2025-11-13)
 
+### LVGL v8.3 Integration (v0.0.3)
+- ✅ 完整集成LVGL v8.3通过ESP-IDF Component Manager
+- ✅ ST7789显示驱动基于ESP LCD API (esp_lcd component)
+- ✅ 双缓冲DMA传输，240×40像素/缓冲
+- ✅ 实现所有5个UI界面 (Bike Computer, GPS Logger, P-Box, GNSS Info, Settings)
+- ✅ 状态栏跨界面持久化，带自动清理机制
+- ✅ 固件大小: 660.8KB (37%剩余空间)
+
+### Critical Bug Fixes (v0.0.3)
+- ✅ **Stack Overflow**: key_event任务栈从2048增至4096字节
+- ✅ **Encoder Not Working**: GPIO1/3添加上拉电阻配置
+- ✅ **Interface Switching Crash**: 状态栏重新初始化前自动清理
+- ✅ **Encoder Sensitivity**: 实现3-step阈值过滤 (±3 steps = ±1 output)
+- ✅ **LCD Test Text**: 移除启动时测试文本，干净显示
+
+### Input System Improvements  
+- ✅ 旋转编码器3-step阈值 + 500ms自动清零消抖机制
+- ✅ GPIO pull-up配置在PCNT初始化前完成
+- ✅ 手动计数重置在主循环处理后执行
+- ✅ 防止机械振动导致的计数漂移
+- ✅ 更新 `encoder_driver.cpp` 和 `encoder_driver.h`
+- ✅ 新增需求 F-INPUT-04, F-INPUT-05
+
 ### UI System Improvements
 - ✅ 创建 `ui_common.h` 统一UI常量定义
 - ✅ 所有UI界面适配240×320分辨率（竖屏模式）
 - ✅ 创建详细UI布局文档 `docs/UI_LAYOUT_240x320.md`
 - ✅ 定义统一颜色方案和字体大小规范
 - ✅ 每个UI屏幕添加精确布局说明和像素计算
-
-### Input System Improvements  
-- ✅ 旋转编码器添加500ms自动清零消抖机制
-- ✅ 防止机械振动导致的计数漂移
-- ✅ 更新 `encoder_driver.cpp` 和 `encoder_driver.h`
-- ✅ 新增需求 F-INPUT-04
 
 ### Screen Layouts Verified
 - ✅ 状态栏: 20px (GPS/电池/SD卡图标)
@@ -66,13 +83,13 @@
 
 ### TODO / Known Issues ⚠️
 
-1. **LVGL Integration**
-   - Need to integrate LovyanGFX or ESP_LCD for ST7789
-   - Create actual LVGL widgets for each screen
-   - Implement touch-free navigation (encoder-based)
-   - Implement satellite list scrolling with LVGL table/list widget
-   - Add color coding for satellite status (gray/yellow/green)
-   - Apply ui_common.h color definitions to LVGL styles
+1. **LVGL细化 (部分完成)** ✅
+   - ✅ LVGL v8.3已集成，基于ESP LCD API
+   - ✅ 所有5个UI界面已实现
+   - ✅ 编码器导航已完成 (3-step threshold)
+   - ⚠️ 卫星列表滚动需LVGL table/list widget优化
+   - ⚠️ 颜色编码需应用到LVGL样式系统
+   - ⚠️ GPS轨迹图canvas可视化待实现
 
 2. **GNSS UBX Protocol**
    - Currently only basic NMEA parsing
@@ -132,6 +149,212 @@
 - 提升UI系统可维护性
 - 方便后续LVGL实现
 - 零性能开销（编译时常量）
+
+### 2025-11-13: LVGL v8.3完整集成 (v0.0.3)
+
+**变更原因**: LCD显示实际工作，完成从占位符到完整LVGL系统的迁移
+
+**集成方案**:
+- 使用ESP-IDF Component Manager添加LVGL v8.3依赖 (idf_component.yml)
+- 基于ESP LCD API实现ST7789驱动 (esp_lcd_panel_io, esp_lcd_panel_ops)
+- 双缓冲策略: 2个240×40像素缓冲区，DMA传输
+- 刷新回调: lvgl_flush_cb()调用trans_done通知，lv_disp_flush_ready()完成
+
+**关键代码**:
+```cpp
+// display_driver.cpp
+esp_lcd_panel_handle_t panel_handle = NULL;
+lv_disp_draw_buf_t disp_buf;
+lv_disp_drv_t disp_drv;
+
+// Double buffer allocation
+lv_color_t* buf1 = (lv_color_t*)heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
+lv_color_t* buf2 = (lv_color_t*)heap_caps_malloc(buf_size, MALLOC_CAP_DMA);
+lv_disp_draw_buf_init(&disp_buf, buf1, buf2, SCREEN_WIDTH * BUF_HEIGHT);
+```
+
+**文件变更**:
+- `main/idf_component.yml` - 添加lvgl^8依赖
+- `main/hardware/display_driver.cpp` - 完全重写ST7789驱动
+- `main/ui/ui_*.cpp` - 所有UI界面从占位符改为实际LVGL widgets
+- `main/config.h` - 添加DIAG_SLOW_LOG_INTERVAL_MS=5000
+
+**编译结果**:
+- 二进制大小: 660.8KB (0xa1350)
+- 分区剩余: 37% (0x5ecb0)
+- 零警告编译
+
+---
+
+### 2025-11-13: 关键Bug修复清单 (v0.0.3)
+
+#### Bug #1: Stack Overflow in key_event Task
+
+**问题描述**:
+```
+***ERROR*** A stack overflow in task key_event has been detected.
+Backtrace: 0x4037fc5e:0x3fcaeff0 ...
+```
+
+**根本原因**: 
+- key_event任务栈仅2048字节
+- diagnostics_trigger()函数调用诊断系统需要更多栈空间
+- 短按/长按均触发diagnostics_trigger()导致栈溢出
+
+**解决方案**:
+```cpp
+// encoder_driver.cpp
+xTaskCreate(key_event_task, "key_event", 4096, NULL, 3, NULL);  // 2048 → 4096
+```
+
+**验证**: 反复短按/长按测试，无重启
+
+---
+
+#### Bug #2: Encoder No Log Output
+
+**问题描述**:
+- 旋转编码器物理旋转，但主循环encoder_get_count()始终返回0
+- 无任何log输出
+
+**根本原因1 - 自动清零逻辑冲突**:
+- encoder_get_count()内部500ms自动清零
+- 主循环100ms调用，但清零在读取前发生
+- 导致计数被清除后才被读取
+
+**解决方案1**: 
+- 移除encoder_get_count()内的自动清零
+- 改为主循环手动重置: pcnt_counter_clear(encoder_pcnt_unit)
+
+**根本原因2 - GPIO未配置上拉**:
+- PCNT初始化后GPIO未配置pull-up
+- 浮空输入导致信号不稳定
+
+**解决方案2**:
+```cpp
+// encoder_driver.cpp - 在PCNT初始化前
+gpio_config_t io_conf = {
+    .pin_bit_mask = (1ULL << ENC_A_GPIO) | (1ULL << ENC_B_GPIO),
+    .mode = GPIO_MODE_INPUT,
+    .pull_up_en = GPIO_PULLUP_ENABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE,
+};
+gpio_config(&io_conf);
+```
+
+**验证**: 旋转编码器log正常输出，计数准确
+
+---
+
+#### Bug #3: Interface Switching Crash
+
+**问题描述**:
+```
+Guru Meditation Error: Core 0 panic'ed (LoadProhibited)
+Exception was unhandled.
+Core 0 register dump:
+PC: 0x42068927  PS: 0x00060833  A0: 0x8205f5bc  A1: 0x3fcaf990
+EXCVADDR: 0x00000008  (Load from invalid address 0x8)
+```
+
+**根本原因**:
+- 状态栏widgets在模式切换时被多次创建
+- 未检查statusbar_cont是否已存在
+- 导致野指针访问
+
+**解决方案**:
+```cpp
+// ui_statusbar.cpp
+void ui_statusbar_init(void) {
+    if (statusbar_cont != NULL) {
+        lv_obj_del(statusbar_cont);  // Auto-cleanup
+        statusbar_cont = NULL;
+    }
+    statusbar_cont = lv_obj_create(lv_scr_act());
+    // ... rest of initialization
+}
+```
+
+**验证**: 反复切换5个界面，无崩溃
+
+---
+
+#### Bug #4: LCD Test Text Not Removed
+
+**问题描述**:
+- LCD初始化完成后显示"ESP32-S3 GPS\nMINiMIX\nReady!"
+- 用户要求启动直接进入UI，无测试文本
+
+**解决方案**:
+```cpp
+// display_driver.cpp - display_init()
+// 删除以下代码:
+// lv_obj_t* label = lv_label_create(lv_scr_act());
+// lv_label_set_text(label, "ESP32-S3 GPS\nMINiMIX\nReady!");
+// lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+
+// 仅保留黑色背景:
+lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0x000000), LV_PART_MAIN);
+```
+
+**验证**: 启动后直接显示状态栏+自行车码表UI
+
+---
+
+#### Bug #5: Encoder Too Sensitive
+
+**问题描述**:
+- 旋转编码器每个物理click都触发界面切换
+- 用户体验：轻微转动导致误操作
+
+**需求**: "旋转3个step才认为是一次操作，并默认500ms没有操作清零计数器"
+
+**解决方案**:
+```cpp
+// encoder_driver.cpp
+#define ENCODER_STEP_THRESHOLD  3
+#define ENCODER_AUTO_CLEAR_MS   500
+
+static int32_t last_encoder_count = 0;
+static uint32_t last_encoder_change_time = 0;
+
+int32_t encoder_get_count(void) {
+    int32_t count;
+    pcnt_get_counter_value(encoder_pcnt_unit, &count);
+    
+    uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    
+    // 检测变化
+    if (count != last_encoder_count) {
+        last_encoder_count = count;
+        last_encoder_change_time = now;
+    }
+    
+    // 阈值过滤
+    if (count >= ENCODER_STEP_THRESHOLD) {
+        pcnt_counter_clear(encoder_pcnt_unit);
+        last_encoder_count = 0;
+        return 1;
+    } else if (count <= -ENCODER_STEP_THRESHOLD) {
+        pcnt_counter_clear(encoder_pcnt_unit);
+        last_encoder_count = 0;
+        return -1;
+    }
+    
+    // 500ms自动清零
+    if (count != 0 && (now - last_encoder_change_time) >= ENCODER_AUTO_CLEAR_MS) {
+        pcnt_counter_clear(encoder_pcnt_unit);
+        last_encoder_count = 0;
+    }
+    
+    return 0;
+}
+```
+
+**验证**: 需旋转3个step才触发，体验改善
+
+---
 
 ### 2025-11-13: 旋转编码器消抖机制 (v0.0.2)
 

@@ -73,28 +73,68 @@ Per hardware specifications:
 ## Task Architecture
 
 ### FreeRTOS Tasks:
-1. **UI Task** (Priority 5): LVGL updates, display rendering
-2. **App Task** (Priority 4): Application logic updates
-3. **Diagnostics Task** (Priority 1): System health monitoring
-4. **RTC Sync Task** (Priority 2): One-time GPS time sync
+1. **UI Task** (Priority 5): LVGL updates (lv_timer_handler), display rendering
+2. **App Task** (Priority 4): Application logic updates (100ms cycle)
+3. **Key Event Task** (Priority 3, Stack: 4096 bytes): Button event handling
+4. **Diagnostics Task** (Priority 1): System health monitoring (Fast: 1s/5s, Slow: 5s/continuous)
+5. **RTC Sync Task** (Priority 2): One-time GPS time sync
+
+### Task Communication:
+- FreeRTOS Queues: Button events, encoder events
+- Direct function calls: Sensor data access (thread-safe drivers)
+- Global state: AppMode enum for UI synchronization
 
 ## Input Handling
 
 ### Rotary Encoder (PCNT)
-- Hardware pulse counting for accurate rotation tracking
-- No polling overhead
+- **Hardware**: GPIO1 (A相), GPIO3 (B相), both with pull-up resistors
+- **Method**: PCNT hardware pulse counter for accurate tracking
+- **Sensitivity Control**: 
+  - 3-step threshold filter (±3 raw steps = ±1 output)
+  - 500ms auto-clear timeout (prevents drift)
+- **Integration**: Manual count reset after handling in main loop
+- **Function**: Mode switching (cycles through 5 interfaces)
 
 ### Button (GPIO ISR)
-- **Short press** (<1s): Mode switch (Bike Computer → GPS Logger → P-Box → GNSS Info → ...)
-- **Medium press** (1-3s): Start/stop recording
-- **Long press** (>3s): Enter/exit settings
-- **Double click** (<500ms between): Reserved
+- **Hardware**: GPIO2 with pull-up resistor
+- **Detection**: GPIO interrupt with FreeRTOS queue
+- **Debounce**: 50ms software debounce
+- **Event Types**:
+  - **Short press** (~50ms): Context action / Confirm
+  - **Medium press** (~500ms): GPS recording toggle
+  - **Long press** (~2000ms): Settings toggle
+  - **Double click**: Reserved for future use
+- **Stack**: 4096 bytes (increased from 2048 to prevent overflow)
 
-## Display Update Strategy
+## Display System
 
-1. Status bar updated every frame (GPS, battery, SD card)
-2. Mode-specific content updated at 10Hz
-3. LVGL timer handler called in UI task
+### ST7789 LCD Driver with LVGL v8.3
+
+**Hardware Configuration**:
+- Resolution: 240×320 pixels (portrait)
+- Rotation: 180° (DISP_ROTATION = 2)
+- Interface: SPI3 at 40MHz
+- Pins: SCK=GPIO5, MOSI=GPIO8, CS=GPIO7, DC=GPIO6, RST=GPIO4
+- Backlight: LEDC PWM on GPIO9, 2kHz, 50% default duty
+
+**LVGL Integration**:
+- Version: v8.3 (via ESP-IDF Component Manager)
+- Buffer: Double buffer, 240×40 pixels each (DMA optimized)
+- Display Driver: ESP LCD API (esp_lcd component)
+- Flush Callback: lvgl_flush_cb() with DMA transfer notifications
+- Background: Black (0x000000)
+- Font: lv_font_montserrat_14 (universal compatibility)
+
+**Update Strategy**:
+1. LVGL timer handler called in UI task loop
+2. Status bar re-initialized on mode switch (auto-cleanup)
+3. Mode-specific content updated at 10Hz via app_task
+4. Display flush triggered by lv_disp_flush_ready() callback
+
+**Mode Switching Logic**:
+- Safe mode transition: Deinit current → Update mode → Re-init statusbar → Init new mode
+- Status bar persistence: Auto-cleanup prevents memory leaks
+- No crashes on repeated switching (verified stable)
 
 ## Power Management
 
@@ -103,12 +143,32 @@ Per hardware specifications:
 - GPS LDO controlled via GPIO14
 - Display backlight PWM at 2kHz
 
-## Diagnostics
+## Diagnostics System
 
+### Logging Strategy
 Per F-DIAG requirements:
-- First 5 seconds: High-frequency logging (1Hz)
-- After 5 seconds: Low-frequency heartbeat (10s)
-- Reports all sensor status and temperatures
+- **Fast mode**: 1Hz for first 5 seconds (startup diagnostics)
+- **Slow mode**: 5Hz continuous (reduced from 10s to 5s per F-DIAG-02)
+- **Manual trigger**: diagnostics_trigger(reason) for immediate event logging
+  - Called on button press (with duration)
+  - Called on encoder rotation
+
+### Diagnostic Information
+Reports all sensor status and temperatures:
+- GNSS: Fix status, satellite count, position
+- IMU: Linear acceleration, gravity components, gyroscope
+- Magnetometer: 3-axis raw values
+- Barometer: Pressure in hPa
+- Temperatures: MCU, IMU, BARO, MAG (4 sources)
+
+### GPS Baudrate Configuration
+- Default: 9600 bps (module power-on default)
+- Target: 115200 bps
+- Method: PMTK251 command sequence
+  1. Start UART at 9600
+  2. Send "$PMTK251,115200*1F\r\n"
+  3. Switch ESP32 UART to 115200
+  4. Continue normal operation
 
 ## Building the Project
 

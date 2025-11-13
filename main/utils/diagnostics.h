@@ -24,4 +24,10 @@ void diagnostics_run(void);
  */
 void diagnostics_start_task(void);
 
+/**
+ * @brief Trigger immediate diagnostic log
+ * @param reason Reason for trigger (e.g., "Key press: 150ms")
+ */
+void diagnostics_trigger(const char* reason);
+
 #endif // DIAGNOSTICS_H
