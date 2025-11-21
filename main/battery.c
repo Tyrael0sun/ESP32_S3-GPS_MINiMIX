@@ -6,8 +6,6 @@
 static const char *TAG = "BATTERY";
 
 static adc_oneshot_unit_handle_t adc_handle = NULL;
-static adc_cali_handle_t adc_cali_handle = NULL;
-static bool do_calibration = false;
 
 // ADC2 Channel 1 is GPIO 12 on ESP32-S3?
 // Spec says: "BAT_ADC / CHRG_STATUS | 12 / 21"

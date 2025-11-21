@@ -106,7 +106,7 @@ esp_err_t gnss_init(void) {
 
     ESP_ERROR_CHECK(uart_driver_install(GNSS_UART_NUM, BUF_SIZE * 2, 0, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(GNSS_UART_NUM, &uart_config));
-    ESP_ERROR_CHECK(uart_set_pin(GNSS_UART_NUM, GNSS_TX_PIN, GNSS_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_set_pin(GNSS_UART_NUM, GNSS_TX_PIN_ESP, GNSS_RX_PIN_ESP, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
     // 2. Enable LDO if needed
     gpio_config_t ldo_conf = {
@@ -155,12 +155,17 @@ void gnss_task_entry(void *pvParameters) {
     int ubx_len = 0;
     uint8_t ubx_class = 0;
     uint8_t ubx_id = 0;
-    uint8_t ubx_ck_a = 0;
-    uint8_t ubx_ck_b = 0;
-
     while (1) {
         // Read data from UART
         int len = uart_read_bytes(GNSS_UART_NUM, data, BUF_SIZE, pdMS_TO_TICKS(50));
+
+        // Debug Log: Print Raw Hex for debugging connection
+        if (len > 0) {
+            // ESP_LOG_BUFFER_HEXDUMP(TAG, data, len, ESP_LOG_INFO);
+        } else {
+             // ESP_LOGW(TAG, "No GNSS Data");
+        }
+
         if (len < 0) continue;
 
         for (int i = 0; i < len; i++) {
@@ -191,8 +196,6 @@ void gnss_task_entry(void *pvParameters) {
             }
 
             // 2. UBX Check (0xB5 0x62 ...)
-            // Note: If we are in NMEA mode, we shouldn't switch unless we see valid UBX start which isn't ASCII.
-            // But '$' is not 0xB5.
             if (state == PARSE_IDLE && byte == UBX_SYNC_CHAR_1) {
                 state = PARSE_UBX_SYNC1;
             } else if (state == PARSE_UBX_SYNC1) {
@@ -218,12 +221,11 @@ void gnss_task_entry(void *pvParameters) {
                 }
                 if (ubx_idx == ubx_len) state = PARSE_UBX_CKA;
             } else if (state == PARSE_UBX_CKA) {
-                ubx_ck_a = byte;
+                // ubx_ck_a = byte;
                 state = PARSE_UBX_CKB;
             } else if (state == PARSE_UBX_CKB) {
-                ubx_ck_b = byte;
-                // Packet Complete, Verify Checksum? (Skipping verification for log-only, but recommended)
-                // Log It
+                // ubx_ck_b = byte;
+                // Packet Complete
                 if (ubx_class == UBX_CLASS_ACK) {
                     if (ubx_id == UBX_ID_ACK_ACK) {
                         // Payload: CLS ID of acked message

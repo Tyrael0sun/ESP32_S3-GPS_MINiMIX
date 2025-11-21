@@ -4,9 +4,25 @@
 #include <driver/gpio.h>
 
 // GNSS UART
+// Spec: GNSS_TX / GNSS_RX / GPS_LDO_EN | 17 / 18 / 14
+// This usually means Pin 17 is GNSS_TX (Output from GNSS) and 18 is GNSS_RX (Input to GNSS)
+// For ESP32 UART Config:
+// uart_set_pin(uart_num, TX_PIN, RX_PIN, ...)
+// TX_PIN should be ESP32 TX (Connected to GNSS RX)
+// RX_PIN should be ESP32 RX (Connected to GNSS TX)
+// So ESP32_TX = 18 (GNSS_RX), ESP32_RX = 17 (GNSS_TX)
+// Wait, if "GNSS_TX" means the pin label on the schematic is "GNSS_TX", it usually connects to ESP32 RX.
+// Let's assume the labels in the spec refer to the functionality on the ESP32 side (common in GPIO tables).
+// "GNSS_TX" -> Pin 17. If this is ESP32's Pin 17 driving GNSS TX line? No, GNSS TX drives ESP32 RX.
+// Usually:
+// Pin 17 = GNSS_TX (The signal coming FROM GNSS). So ESP32 should treat 17 as RX.
+// Pin 18 = GNSS_RX (The signal going TO GNSS). So ESP32 should treat 18 as TX.
+// Let's swap definitions to match ESP32 perspective for uart_set_pin(tx, rx).
+// UART_TX = 18
+// UART_RX = 17
 #define GNSS_UART_NUM       UART_NUM_1
-#define GNSS_TX_PIN         17
-#define GNSS_RX_PIN         18
+#define GNSS_TX_PIN_ESP     18
+#define GNSS_RX_PIN_ESP     17
 #define GNSS_LDO_EN_PIN     14
 #define GNSS_BAUD_RATE      115200
 

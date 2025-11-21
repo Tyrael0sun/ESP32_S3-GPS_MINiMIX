@@ -5,18 +5,14 @@
 #include <stdint.h>
 #include "esp_err.h"
 
-// I2C Addresses (from config or spec)
+// I2C Addresses
 #include "config.h"
 
-// Sensor WHO_AM_I default values
+// Sensor WHO_AM_I values
 #define LSM6DSR_WHO_AM_I_VAL    0x6B
 #define LIS2MDL_WHO_AM_I_VAL    0x40
 #define BMP388_WHO_AM_I_VAL     0x50
 
-/**
- * @brief Initialize I2C bus and sensors
- * @return esp_err_t ESP_OK on success
- */
 esp_err_t sensors_init(void);
 
 bool sensors_check_imu(void);
@@ -24,10 +20,7 @@ bool sensors_check_mag(void);
 bool sensors_check_baro(void);
 
 /**
- * @brief Read IMU data with axis transformation
- *
- * IMU: LSM6DSR (Z axis inverted, Y axis unchanged)
- * Assuming X axis is unchanged to maintain coordinate system or as default.
+ * @brief Read IMU data
  *
  * @param ax Accel X (g)
  * @param ay Accel Y (g)
@@ -41,10 +34,7 @@ bool sensors_check_baro(void);
 esp_err_t sensors_read_imu(float *ax, float *ay, float *az, float *gx, float *gy, float *gz, float *temp);
 
 /**
- * @brief Read Magnetometer data with axis transformation
- *
- * Mag: LIS2MDL (X axis normal, Y axis inverted, Z axis inverted)
- * Note: Spec said "Y axis exchange and reverse", assuming "Y inverted".
+ * @brief Read Magnetometer data
  *
  * @param mx Mag X (uT)
  * @param my Mag Y (uT)
@@ -62,5 +52,10 @@ esp_err_t sensors_read_mag(float *mx, float *my, float *mz, float *temp);
  * @return esp_err_t
  */
 esp_err_t sensors_read_baro(float *pressure, float *temp);
+
+// Helper functions for derived data
+void sensors_calc_gravity_linear(float ax, float ay, float az, float *grav_x, float *grav_y, float *grav_z, float *lin_x, float *lin_y, float *lin_z);
+float sensors_calc_heading(float mx, float my);
+float sensors_calc_altitude(float pressure_hpa, float temp_c);
 
 #endif // SENSORS_H

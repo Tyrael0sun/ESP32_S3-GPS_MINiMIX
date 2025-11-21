@@ -73,7 +73,7 @@ esp_err_t display_init(void) {
     // 3. Install ST7789 Panel Driver
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = DISP_RST_PIN,
-        .rgb_endian = LCD_RGB_ENDIAN_RGB, // Default
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB, // Default
         .bits_per_pixel = 16,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));

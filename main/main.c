@@ -10,7 +10,7 @@
 #include "display.h"
 #include "input.h"
 #include "gnss.h"
-#include "battery.h" // Include Battery
+#include "battery.h"
 
 static const char *TAG = "MAIN";
 
@@ -69,8 +69,10 @@ void diagnostics_task(void *pvParameters) {
     ESP_LOGI(TAG, "Diagnostics Task Started");
 
     float ax, ay, az, gx, gy, gz, temp_imu;
+    float grav_x, grav_y, grav_z, lin_x, lin_y, lin_z;
     float mx, my, mz, temp_mag;
-    float press, temp_baro;
+    float heading;
+    float press, temp_baro, altitude;
     uint32_t bat_mv;
 
     // Phase 1: Startup Self-Test (0-5s)
@@ -79,13 +81,22 @@ void diagnostics_task(void *pvParameters) {
 
         // Read Sensors
         sensors_read_imu(&ax, &ay, &az, &gx, &gy, &gz, &temp_imu);
+        sensors_calc_gravity_linear(ax, ay, az, &grav_x, &grav_y, &grav_z, &lin_x, &lin_y, &lin_z);
+
         sensors_read_mag(&mx, &my, &mz, &temp_mag);
+        heading = sensors_calc_heading(mx, my);
+
         sensors_read_baro(&press, &temp_baro);
+        altitude = sensors_calc_altitude(press, temp_baro);
+
         battery_read_voltage(&bat_mv);
 
-        ESP_LOGI(TAG, "IMU: A(%.2f, %.2f, %.2f) G(%.2f, %.2f, %.2f) T=%.1fC", ax, ay, az, gx, gy, gz, temp_imu);
-        ESP_LOGI(TAG, "MAG: (%.2f, %.2f, %.2f)", mx, my, mz);
-        ESP_LOGI(TAG, "BARO: P=%.1f hPa, T=%.1f C", press, temp_baro);
+        ESP_LOGI(TAG, "IMU: ACC(%.2f,%.2f,%.2f) GRAV(%.2f,%.2f,%.2f) LIN(%.2f,%.2f,%.2f)",
+                 ax, ay, az, grav_x, grav_y, grav_z, lin_x, lin_y, lin_z);
+        ESP_LOGI(TAG, "GYRO: (%.2f,%.2f,%.2f) dps", gx, gy, gz);
+        ESP_LOGI(TAG, "MAG: (%.2f,%.2f,%.2f) Heading=%.1f", mx, my, mz, heading);
+        ESP_LOGI(TAG, "BARO: P=%.1f hPa Alt=%.1f m", press, altitude);
+        ESP_LOGI(TAG, "TEMP: IMU=%.1f C, MAG=%.1f C, BARO=%.1f C", temp_imu, temp_mag, temp_baro);
         ESP_LOGI(TAG, "BAT: %lu mV", bat_mv);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -97,12 +108,16 @@ void diagnostics_task(void *pvParameters) {
     while (1) {
         // Heartbeat includes sensor snapshot
         sensors_read_imu(&ax, &ay, &az, &gx, &gy, &gz, &temp_imu);
+        sensors_calc_gravity_linear(ax, ay, az, &grav_x, &grav_y, &grav_z, &lin_x, &lin_y, &lin_z);
         sensors_read_mag(&mx, &my, &mz, &temp_mag);
+        heading = sensors_calc_heading(mx, my);
         sensors_read_baro(&press, &temp_baro);
+        altitude = sensors_calc_altitude(press, temp_baro);
         battery_read_voltage(&bat_mv);
 
-        ESP_LOGI(TAG, "[DIAG] HB: IMU A(%.2f,%.2f,%.2f) MAG(%.2f,%.2f,%.2f) BARO(%.1f) BAT(%lu)",
-                 ax, ay, az, mx, my, mz, press, bat_mv);
+        // Compact Log
+        ESP_LOGI(TAG, "HB: LIN(%.2f,%.2f,%.2f) GYR(%.2f,%.2f,%.2f) HDG(%.1f) ALT(%.1f) T(%.1f) BAT(%lu)",
+                 lin_x, lin_y, lin_z, gx, gy, gz, heading, altitude, temp_imu, bat_mv);
 
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
