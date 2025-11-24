@@ -17,12 +17,8 @@ volatile gnss_data_t g_gnss_data = {0};
 #define UBX_SYNC_CHAR_1 0xB5
 #define UBX_SYNC_CHAR_2 0x62
 #define UBX_CLASS_CFG   0x06
-#define UBX_CLASS_ACK   0x05
-#define UBX_ID_CFG_PRT  0x00
 #define UBX_ID_CFG_RATE 0x08
 #define UBX_ID_CFG_GNSS 0x3E
-#define UBX_ID_ACK_ACK  0x01
-#define UBX_ID_ACK_NAK  0x00
 
 static void send_ubx_msg(uint8_t class, uint8_t id, uint8_t *payload, uint16_t payload_len) {
     uint8_t header[6];
@@ -43,39 +39,15 @@ static void send_ubx_msg(uint8_t class, uint8_t id, uint8_t *payload, uint16_t p
     uart_write_bytes(GNSS_UART_NUM, (const char*)&ck_b, 1);
 }
 
-static void gnss_configure_baud_rate_legacy(void) {
-    // Method 1: Try CFG-PRT (20 bytes) for M8
-    uint8_t payload[20];
-    memset(payload, 0, 20);
-    payload[0] = 0x01; // Port 1
-    payload[4] = 0xD0; payload[5] = 0x08; // 8N1
-    payload[8] = 0x00; payload[9] = 0xC2; payload[10] = 0x01; // 115200
-    payload[12] = 0x03; payload[14] = 0x03; // UBX+NMEA
-
-    ESP_LOGI(TAG, "Sending UBX CFG-PRT (115200)...");
-    send_ubx_msg(UBX_CLASS_CFG, UBX_ID_CFG_PRT, payload, 20);
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    // Method 2: Try NMEA $PUBX,41 (Port Config) as backup/alternative
-    // $PUBX,41,1,0007,0003,115200,0*1E\r\n
-    // 1=UART1, 0007=8N1, 0003=UBX+NMEA, 115200=Baud
-    // const char *cmd_pubx = "$PUBX,41,1,0007,0003,115200,0*1E\r\n";
-    // Checksum calculation needed if hardcoded string not verified.
-    // 41,1,0007,0003,115200,0 -> Checksum
-    // Let's rely on UBX CFG-PRT first, but send it multiple times.
-
-    send_ubx_msg(UBX_CLASS_CFG, UBX_ID_CFG_PRT, payload, 20);
-    vTaskDelay(pdMS_TO_TICKS(100));
-}
-
-static void gnss_configure_rate_5hz(void) {
-    uint8_t payload[6] = {0xC8, 0x00, 0x01, 0x00, 0x01, 0x00}; // 200ms
+// Configure Rate (CFG-RATE)
+// 1Hz (1000ms) update rate for stable 9600 baud operation
+static void gnss_configure_rate_1hz(void) {
+    uint8_t payload[6] = {0xE8, 0x03, 0x01, 0x00, 0x01, 0x00}; // 1000ms = 1Hz
     send_ubx_msg(UBX_CLASS_CFG, UBX_ID_CFG_RATE, payload, 6);
 }
 
+// Configure Constellation (CFG-GNSS)
 static void gnss_configure_constellation(void) {
-    // 5 Blocks: GPS(0), SBAS(1), Galileo(2), BeiDou(3), GLONASS(6)
-    // 4 (header) + 5*8 (blocks) = 44 bytes
     uint8_t payload[44];
     memset(payload, 0, 44);
 
@@ -99,7 +71,6 @@ static void gnss_configure_constellation(void) {
 esp_err_t gnss_init(void) {
     ESP_LOGI(TAG, "Init GNSS (9600)...");
 
-    // 1. Init UART at 9600
     uart_config_t uart_config = {
         .baud_rate = 9600,
         .data_bits = UART_DATA_8_BITS,
@@ -117,20 +88,9 @@ esp_err_t gnss_init(void) {
 
     vTaskDelay(pdMS_TO_TICKS(2000)); // Wait for boot
 
-    // 2. Try to Switch Baud Rate
-    gnss_configure_baud_rate_legacy();
-    uart_wait_tx_done(GNSS_UART_NUM, pdMS_TO_TICKS(200));
-
-    // 3. Reconfigure ESP32 to 115200
-    ESP_LOGI(TAG, "Switching Host UART to 115200...");
-    uart_flush_input(GNSS_UART_NUM);
-    uart_set_baudrate(GNSS_UART_NUM, 115200);
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    // 4. Configure Rate and Constellation at high speed
-    // Note: If baud switch failed, these will be lost (sent at 115200 to a 9600 device).
-    // But if switch succeeded, these configure the device.
-    gnss_configure_rate_5hz();
+    // Configure Rate and Constellation at 9600 baud
+    ESP_LOGI(TAG, "Configuring GNSS (1Hz, GPS+BDS)...");
+    gnss_configure_rate_1hz();
     vTaskDelay(pdMS_TO_TICKS(100));
     gnss_configure_constellation();
 
@@ -138,7 +98,6 @@ esp_err_t gnss_init(void) {
 }
 
 static void parse_nmea_gga(char *line) {
-    // Simple parser logic (same as before)
     char *p = line;
     int idx = 0;
     char *f;

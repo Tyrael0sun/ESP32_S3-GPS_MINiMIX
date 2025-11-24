@@ -135,7 +135,7 @@ esp_err_t input_init(void) {
     esp_err_t err = gpio_config(&io_conf);
     if (err != ESP_OK) return err;
 
-    xTaskCreate(input_task, "input_task", 2048, NULL, 5, NULL);
+    xTaskCreate(input_task, "input_task", 4096, NULL, 5, NULL);
 
     ESP_LOGI(TAG, "Input configured successfully.");
     return ESP_OK;

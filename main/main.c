@@ -37,23 +37,19 @@ void diagnostics_trigger(const char *event) {
 }
 
 // Global shared sensor data (for UI)
-static float g_speed = 0.0f; // From GNSS (TODO: Calculate speed in GNSS)
+static float g_speed = 0.0f;
 static float g_alt = 0.0f;
 static float g_heading = 0.0f;
 static float g_press = 0.0f;
 static float g_bat = 0.0f;
-// Extern declaration for global input buffer from input.c (if not in header, we need to declare it or add getter)
-// Better to add getter in input.h, but for speed here, we used a global in input.c
-// Let's add a getter function in input.c and use it here, or just use the ui_update function.
-// Wait, my input.c logic calls ui_update_input_status directly? No, I need to add that call.
-// Let's re-check input.c logic. It calls report_event.
-// report_event calls diagnostics_trigger.
-// I need to update input.c to ALSO call ui_update_input_status if I want to update it from there.
-// BUT input_task cannot call UI functions directly if they are not thread safe or if they use LVGL without lock.
-// UI task loop updates SENSORS.
-// Input event is transient.
-// Best approach: Use a global string buffer protected or atomic, read by UI task.
-// In input.c I added `g_input_event_str`. I should declare it extern here or in input.h.
+
+// Global IMU data for UI
+static float g_gx=0, g_gy=0, g_gz=0, g_ax=0, g_ay=0, g_az=0, g_lx=0, g_ly=0, g_lz=0, g_temp_imu=0;
+// Global Mag data for UI
+static float g_mx=0, g_my=0, g_mz=0, g_temp_mag=0;
+static float g_temp_baro=0;
+
+// Extern from input.c
 extern char g_input_event_str[32];
 
 void ui_task(void *pvParameters) {
@@ -71,9 +67,30 @@ void ui_task(void *pvParameters) {
 
     while (1) {
         if (display_lock(10)) {
-            // Update UI with global data
-            ui_update_sensors(g_speed, g_alt, g_heading, g_press, g_bat);
-            ui_update_input_status(g_input_event_str);
+            // Update header
+            ui_update_header(g_bat);
+
+            // Update GPS
+            ui_update_gps(g_gnss_data.fix, g_gnss_data.sats, g_gnss_data.lat, g_gnss_data.lon, g_speed, g_alt);
+
+            // Update IMU: Pass Grav, Gyro, Linear (Acc label in UI)
+            // MAPPING FIX:
+            // ui_update_imu(grav_x, grav_y, grav_z, gyr_x, gyr_y, gyr_z, lin_x, lin_y, lin_z, temp)
+            // Globals are:
+            // g_ax, g_ay, g_az -> Raw/Gravity (since filter removed)
+            // g_gx, g_gy, g_gz -> Gyro
+            // g_lx, g_ly, g_lz -> Linear
+            ui_update_imu(g_ax, g_ay, g_az, g_gx, g_gy, g_gz, g_lx, g_ly, g_lz, g_temp_imu);
+
+            // Update Mag
+            ui_update_mag(g_mx, g_my, g_mz, g_heading, g_temp_mag);
+
+            // Update Baro
+            ui_update_baro(g_press, g_alt, g_temp_baro);
+
+            // Update Input
+            ui_update_input(g_input_event_str);
+
             lv_timer_handler();
             display_unlock();
         }
@@ -99,7 +116,6 @@ static float get_mcu_temp(void) {
 void diagnostics_task(void *pvParameters) {
     ESP_LOGI(TAG, "Diagnostics Task Started");
 
-    // Init MCU Temp Sensor
     temperature_sensor_config_t temp_sensor = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
     temperature_sensor_install(&temp_sensor, &temp_handle);
     temperature_sensor_enable(temp_handle);
@@ -112,7 +128,8 @@ void diagnostics_task(void *pvParameters) {
     uint32_t bat_mv;
     float mcu_temp;
 
-    // Wait a bit for systems to stabilize
+    int log_counter = 0;
+
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     while (1) {
@@ -129,30 +146,43 @@ void diagnostics_task(void *pvParameters) {
         battery_read_voltage(&bat_mv);
         mcu_temp = get_mcu_temp();
 
-        // Update globals for UI
+        // Update globals for UI (Thread safe enough for display float)
         g_alt = altitude;
         g_heading = heading;
         g_press = press;
         g_bat = (float)bat_mv;
 
-        // 2. Format Output Block
-        ESP_LOGI(TAG, "[DIAG][T=%lldms]", esp_timer_get_time() / 1000);
+        // Store raw values to globals
+        g_ax=grav_x; g_ay=grav_y; g_az=grav_z; // Use calculated/passed gravity as 'Grav'
+        g_gx=gx; g_gy=gy; g_gz=gz;
+        g_lx=lin_x; g_ly=lin_y; g_lz=lin_z;
+        g_temp_imu=temp_imu;
+        g_mx=mx; g_my=my; g_mz=mz;
+        g_temp_mag=temp_mag;
+        g_temp_baro=temp_baro;
 
-        if (g_gnss_data.fix) {
-            ESP_LOGI(TAG, "GNSS: OK, %d sats, (%.4f,%.4f)", g_gnss_data.sats, g_gnss_data.lat, g_gnss_data.lon);
-        } else {
-            ESP_LOGI(TAG, "GNSS: NO FIX, %d sats", g_gnss_data.sats);
+        // 2. Log Output
+        if (++log_counter >= 25) {
+            log_counter = 0;
+
+            ESP_LOGI(TAG, "[DIAG][T=%lldms]", esp_timer_get_time() / 1000);
+
+            if (g_gnss_data.fix) {
+                ESP_LOGI(TAG, "GNSS: OK, %d sats, (%.4f,%.4f)", g_gnss_data.sats, g_gnss_data.lat, g_gnss_data.lon);
+            } else {
+                ESP_LOGI(TAG, "GNSS: NO FIX, %d sats", g_gnss_data.sats);
+            }
+
+            ESP_LOGI(TAG, "IMU: ACC(L:%.2f,%.2f,%.2f) GRAV(%.2f,%.2f,%.2f)", lin_x, lin_y, lin_z, grav_x, grav_y, grav_z);
+            ESP_LOGI(TAG, "GYR(%.1f,%.1f,%.1f)", gx, gy, gz);
+            ESP_LOGI(TAG, "MAG: (%.1f,%.1f,%.1f) Heading=%.1f", mx, my, mz, heading);
+            ESP_LOGI(TAG, "BARO: %.1fhPa Alt=%.1fm", press, altitude);
+            ESP_LOGI(TAG, "TEMP: MCU=%.1fC, IMU=%.1fC, BARO=%.1fC, MAG=%.1fC", mcu_temp, temp_imu, temp_baro, temp_mag);
+            ESP_LOGI(TAG, "BAT: %lu mV", bat_mv);
+            ESP_LOGI(TAG, "RESULT: OK");
         }
 
-        ESP_LOGI(TAG, "IMU: ACC(L:%.2f,%.2f,%.2f) GRAV(%.2f,%.2f,%.2f)", lin_x, lin_y, lin_z, grav_x, grav_y, grav_z);
-        ESP_LOGI(TAG, "GYR(%.1f,%.1f,%.1f)", gx, gy, gz);
-        ESP_LOGI(TAG, "MAG: (%.1f,%.1f,%.1f) Heading=%.1f", mx, my, mz, heading);
-        ESP_LOGI(TAG, "BARO: %.1fhPa Alt=%.1fm", press, altitude);
-        ESP_LOGI(TAG, "TEMP: MCU=%.1fC, IMU=%.1fC, BARO=%.1fC, MAG=%.1fC", mcu_temp, temp_imu, temp_baro, temp_mag);
-        ESP_LOGI(TAG, "BAT: %lu mV", bat_mv);
-        ESP_LOGI(TAG, "RESULT: OK");
-
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
 
