@@ -7,18 +7,22 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 static const char *TAG = "GNSS";
-#define BUF_SIZE 2048 // Increased buffer for fragmentation handling
+#define BUF_SIZE 2048
 
-// UBX Constants
+volatile gnss_data_t g_gnss_data = {0};
+
 #define UBX_SYNC_CHAR_1 0xB5
 #define UBX_SYNC_CHAR_2 0x62
 #define UBX_CLASS_CFG   0x06
 #define UBX_CLASS_ACK   0x05
+#define UBX_ID_CFG_PRT  0x00
+#define UBX_ID_CFG_RATE 0x08
+#define UBX_ID_CFG_GNSS 0x3E
 #define UBX_ID_ACK_ACK  0x01
 #define UBX_ID_ACK_NAK  0x00
-#define UBX_ID_CFG_VALSET 0x8A
 
 static void send_ubx_msg(uint8_t class, uint8_t id, uint8_t *payload, uint16_t payload_len) {
     uint8_t header[6];
@@ -30,71 +34,72 @@ static void send_ubx_msg(uint8_t class, uint8_t id, uint8_t *payload, uint16_t p
     header[5] = (payload_len >> 8) & 0xFF;
 
     uint8_t ck_a = 0, ck_b = 0;
-
-    // Calc header part checksum (starting from Class)
-    for(int i=2; i<6; i++) {
-        ck_a += header[i];
-        ck_b += ck_a;
-    }
-    // Calc payload part checksum
-    for(int i=0; i<payload_len; i++) {
-        ck_a += payload[i];
-        ck_b += ck_a;
-    }
+    for(int i=2; i<6; i++) { ck_a += header[i]; ck_b += ck_a; }
+    for(int i=0; i<payload_len; i++) { ck_a += payload[i]; ck_b += ck_a; }
 
     uart_write_bytes(GNSS_UART_NUM, (const char*)header, 6);
-    if (payload_len > 0) {
-        uart_write_bytes(GNSS_UART_NUM, (const char*)payload, payload_len);
-    }
+    if (payload_len > 0) uart_write_bytes(GNSS_UART_NUM, (const char*)payload, payload_len);
     uart_write_bytes(GNSS_UART_NUM, (const char*)&ck_a, 1);
     uart_write_bytes(GNSS_UART_NUM, (const char*)&ck_b, 1);
 }
 
-static void gnss_configure_baud_rate(void) {
-    // U-Blox Generation 9/10 (MAX-F10S) uses CFG-VALSET.
-    // Key: CFG-UART1-BAUDRATE = 0x40520001
-    // Value: 115200 = 0x0001C200
+static void gnss_configure_baud_rate_legacy(void) {
+    // Method 1: Try CFG-PRT (20 bytes) for M8
+    uint8_t payload[20];
+    memset(payload, 0, 20);
+    payload[0] = 0x01; // Port 1
+    payload[4] = 0xD0; payload[5] = 0x08; // 8N1
+    payload[8] = 0x00; payload[9] = 0xC2; payload[10] = 0x01; // 115200
+    payload[12] = 0x03; payload[14] = 0x03; // UBX+NMEA
 
-    // Payload for CFG-VALSET
-    // Version (1) + Layers (1) + Reserved (2) + Key (4) + Value (4) = 12 bytes
-    uint8_t payload[12];
-    memset(payload, 0, 12);
+    ESP_LOGI(TAG, "Sending UBX CFG-PRT (115200)...");
+    send_ubx_msg(UBX_CLASS_CFG, UBX_ID_CFG_PRT, payload, 20);
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-    payload[0] = 0x00; // Version
-    payload[1] = 0x01; // Layer: RAM
-    payload[2] = 0x00; // Reserved
-    payload[3] = 0x00; // Reserved
+    // Method 2: Try NMEA $PUBX,41 (Port Config) as backup/alternative
+    // $PUBX,41,1,0007,0003,115200,0*1E\r\n
+    // 1=UART1, 0007=8N1, 0003=UBX+NMEA, 115200=Baud
+    // const char *cmd_pubx = "$PUBX,41,1,0007,0003,115200,0*1E\r\n";
+    // Checksum calculation needed if hardcoded string not verified.
+    // 41,1,0007,0003,115200,0 -> Checksum
+    // Let's rely on UBX CFG-PRT first, but send it multiple times.
 
-    // Key: 0x40520001 (Little Endian) -> 01 00 52 40
-    payload[4] = 0x01;
-    payload[5] = 0x00;
-    payload[6] = 0x52;
-    payload[7] = 0x40;
+    send_ubx_msg(UBX_CLASS_CFG, UBX_ID_CFG_PRT, payload, 20);
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
 
-    // Value: 115200 = 0x0001C200 (Little Endian) -> 00 C2 01 00
-    payload[8] = 0x00;
-    payload[9] = 0xC2;
-    payload[10] = 0x01;
-    payload[11] = 0x00;
+static void gnss_configure_rate_5hz(void) {
+    uint8_t payload[6] = {0xC8, 0x00, 0x01, 0x00, 0x01, 0x00}; // 200ms
+    send_ubx_msg(UBX_CLASS_CFG, UBX_ID_CFG_RATE, payload, 6);
+}
 
-    ESP_LOGI(TAG, "Sending U-Blox CFG-VALSET to switch baud rate to 115200...");
-    send_ubx_msg(UBX_CLASS_CFG, UBX_ID_CFG_VALSET, payload, 12);
+static void gnss_configure_constellation(void) {
+    // 5 Blocks: GPS(0), SBAS(1), Galileo(2), BeiDou(3), GLONASS(6)
+    // 4 (header) + 5*8 (blocks) = 44 bytes
+    uint8_t payload[44];
+    memset(payload, 0, 44);
 
-    // Wait for transmission and module processing
-    vTaskDelay(pdMS_TO_TICKS(200));
+    payload[0] = 0x00; payload[1] = 0x20; payload[2] = 0x20; payload[3] = 0x05;
+    int offset = 4;
 
-    ESP_LOGI(TAG, "Reconfiguring UART to 115200...");
-    uart_set_baudrate(GNSS_UART_NUM, 115200);
+    // GPS Enable
+    payload[offset] = 0x00; payload[offset+4] = 0x01; payload[offset+6] = 0x01; offset+=8;
+    // SBAS Enable
+    payload[offset] = 0x01; payload[offset+4] = 0x01; payload[offset+6] = 0x01; offset+=8;
+    // Galileo Disable
+    payload[offset] = 0x02; payload[offset+4] = 0x00; payload[offset+6] = 0x01; offset+=8;
+    // BeiDou Enable
+    payload[offset] = 0x03; payload[offset+4] = 0x01; payload[offset+6] = 0x01; offset+=8;
+    // GLONASS Disable
+    payload[offset] = 0x06; payload[offset+4] = 0x00; payload[offset+6] = 0x01; offset+=8;
 
-    // Flush buffers
-    uart_flush_input(GNSS_UART_NUM);
-    ESP_LOGI(TAG, "Baud rate switched.");
+    send_ubx_msg(UBX_CLASS_CFG, UBX_ID_CFG_GNSS, payload, 44);
 }
 
 esp_err_t gnss_init(void) {
-    ESP_LOGI(TAG, "Initializing GNSS UART...");
+    ESP_LOGI(TAG, "Init GNSS (9600)...");
 
-    // 1. Configure UART parameters (Default 9600 first)
+    // 1. Init UART at 9600
     uart_config_t uart_config = {
         .baud_rate = 9600,
         .data_bits = UART_DATA_8_BITS,
@@ -103,144 +108,80 @@ esp_err_t gnss_init(void) {
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-
     ESP_ERROR_CHECK(uart_driver_install(GNSS_UART_NUM, BUF_SIZE * 2, 0, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(GNSS_UART_NUM, &uart_config));
-    ESP_ERROR_CHECK(uart_set_pin(GNSS_UART_NUM, GNSS_TX_PIN_ESP, GNSS_RX_PIN_ESP, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_set_pin(GNSS_UART_NUM, GNSS_TX_PIN_ESP, GNSS_RX_PIN_ESP, -1, -1));
 
-    // 2. Enable LDO if needed
-    gpio_config_t ldo_conf = {
-        .pin_bit_mask = (1ULL << GNSS_LDO_EN_PIN),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&ldo_conf);
+    gpio_set_direction(GNSS_LDO_EN_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(GNSS_LDO_EN_PIN, 1);
 
-    // Give it some time to boot
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(2000)); // Wait for boot
 
-    // 3. Switch Baud Rate
-    gnss_configure_baud_rate();
+    // 2. Try to Switch Baud Rate
+    gnss_configure_baud_rate_legacy();
+    uart_wait_tx_done(GNSS_UART_NUM, pdMS_TO_TICKS(200));
+
+    // 3. Reconfigure ESP32 to 115200
+    ESP_LOGI(TAG, "Switching Host UART to 115200...");
+    uart_flush_input(GNSS_UART_NUM);
+    uart_set_baudrate(GNSS_UART_NUM, 115200);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // 4. Configure Rate and Constellation at high speed
+    // Note: If baud switch failed, these will be lost (sent at 115200 to a 9600 device).
+    // But if switch succeeded, these configure the device.
+    gnss_configure_rate_5hz();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gnss_configure_constellation();
 
     return ESP_OK;
 }
 
-// Simple parser state
-typedef enum {
-    PARSE_IDLE,
-    PARSE_NMEA,
-    PARSE_UBX_SYNC1,
-    PARSE_UBX_CLASS,
-    PARSE_UBX_ID,
-    PARSE_UBX_LEN1,
-    PARSE_UBX_LEN2,
-    PARSE_UBX_PAYLOAD,
-    PARSE_UBX_CKA,
-    PARSE_UBX_CKB
-} ParserState;
+static void parse_nmea_gga(char *line) {
+    // Simple parser logic (same as before)
+    char *p = line;
+    int idx = 0;
+    char *f;
+    float lat=0, lon=0;
+    int q=0, sats=0;
+
+    while ((f = strsep(&p, ",")) != NULL) {
+        if (idx==2 && *f) lat = strtof(f, NULL);
+        else if (idx==3 && *f=='S') lat = -lat;
+        else if (idx==4 && *f) lon = strtof(f, NULL);
+        else if (idx==5 && *f=='W') lon = -lon;
+        else if (idx==6 && *f) q = atoi(f);
+        else if (idx==7 && *f) sats = atoi(f);
+        idx++;
+    }
+
+    g_gnss_data.lat = (int)(lat/100) + (lat-(int)(lat/100)*100)/60.0f;
+    g_gnss_data.lon = (int)(lon/100) + (lon-(int)(lon/100)*100)/60.0f;
+    g_gnss_data.sats = sats;
+    g_gnss_data.fix = (q > 0);
+}
 
 void gnss_task_entry(void *pvParameters) {
     gnss_init();
-
-    uint8_t *data = (uint8_t *) malloc(BUF_SIZE);
-    uint8_t *ubx_payload = (uint8_t *) malloc(1024); // Max UBX payload
-    uint8_t nmea_buf[256];
-
-    ParserState state = PARSE_IDLE;
+    uint8_t *data = malloc(BUF_SIZE);
+    char nmea_buf[256];
     int nmea_idx = 0;
-    int ubx_idx = 0;
-    int ubx_len = 0;
-    uint8_t ubx_class = 0;
-    uint8_t ubx_id = 0;
+
     while (1) {
-        // Read data from UART
         int len = uart_read_bytes(GNSS_UART_NUM, data, BUF_SIZE, pdMS_TO_TICKS(50));
+        if (len <= 0) continue;
 
-        // Debug Log: Print Raw Hex for debugging connection
-        if (len > 0) {
-            // ESP_LOG_BUFFER_HEXDUMP(TAG, data, len, ESP_LOG_INFO);
-        } else {
-             // ESP_LOGW(TAG, "No GNSS Data");
-        }
-
-        if (len < 0) continue;
-
-        for (int i = 0; i < len; i++) {
-            uint8_t byte = data[i];
-
-            // 1. NMEA Check ($...CRLF)
-            if (state == PARSE_IDLE || state == PARSE_NMEA) {
-                if (byte == '$') {
-                    state = PARSE_NMEA;
-                    nmea_idx = 0;
-                    nmea_buf[nmea_idx++] = byte;
-                } else if (state == PARSE_NMEA) {
-                    if (nmea_idx < sizeof(nmea_buf) - 1) {
-                        nmea_buf[nmea_idx++] = byte;
-                        if (byte == '\n') {
-                            nmea_buf[nmea_idx] = 0;
-                            // Trim CR LF
-                            char *crlf = strpbrk((char*)nmea_buf, "\r\n");
-                            if (crlf) *crlf = 0;
-
-                            ESP_LOGI(TAG, "NMEA: %s", nmea_buf);
-                            state = PARSE_IDLE;
-                        }
-                    } else {
-                        state = PARSE_IDLE; // Overflow
-                    }
-                }
-            }
-
-            // 2. UBX Check (0xB5 0x62 ...)
-            if (state == PARSE_IDLE && byte == UBX_SYNC_CHAR_1) {
-                state = PARSE_UBX_SYNC1;
-            } else if (state == PARSE_UBX_SYNC1) {
-                if (byte == UBX_SYNC_CHAR_2) state = PARSE_UBX_CLASS;
-                else state = PARSE_IDLE;
-            } else if (state == PARSE_UBX_CLASS) {
-                ubx_class = byte;
-                state = PARSE_UBX_ID;
-            } else if (state == PARSE_UBX_ID) {
-                ubx_id = byte;
-                state = PARSE_UBX_LEN1;
-            } else if (state == PARSE_UBX_LEN1) {
-                ubx_len = byte;
-                state = PARSE_UBX_LEN2;
-            } else if (state == PARSE_UBX_LEN2) {
-                ubx_len |= (byte << 8);
-                ubx_idx = 0;
-                if (ubx_len > 1024) state = PARSE_IDLE; // Safety
-                else state = PARSE_UBX_PAYLOAD;
-            } else if (state == PARSE_UBX_PAYLOAD) {
-                if (ubx_idx < ubx_len) {
-                    ubx_payload[ubx_idx++] = byte;
-                }
-                if (ubx_idx == ubx_len) state = PARSE_UBX_CKA;
-            } else if (state == PARSE_UBX_CKA) {
-                // ubx_ck_a = byte;
-                state = PARSE_UBX_CKB;
-            } else if (state == PARSE_UBX_CKB) {
-                // ubx_ck_b = byte;
-                // Packet Complete
-                if (ubx_class == UBX_CLASS_ACK) {
-                    if (ubx_id == UBX_ID_ACK_ACK) {
-                        // Payload: CLS ID of acked message
-                        ESP_LOGI(TAG, "UBX ACK-ACK: For Msg 0x%02X-0x%02X", ubx_payload[0], ubx_payload[1]);
-                    } else if (ubx_id == UBX_ID_ACK_NAK) {
-                        ESP_LOGW(TAG, "UBX ACK-NAK: For Msg 0x%02X-0x%02X", ubx_payload[0], ubx_payload[1]);
-                    }
-                } else {
-                    ESP_LOGI(TAG, "UBX Packet: Class=0x%02X ID=0x%02X Len=%d", ubx_class, ubx_id, ubx_len);
-                }
-                state = PARSE_IDLE;
+        for (int i=0; i<len; i++) {
+            char c = (char)data[i];
+            if (c == '$') { nmea_idx = 0; }
+            if (nmea_idx < 255) nmea_buf[nmea_idx++] = c;
+            if (c == '\n') {
+                nmea_buf[nmea_idx] = 0;
+                if (strstr(nmea_buf, "GGA")) parse_nmea_gga(nmea_buf);
+                nmea_idx = 0;
             }
         }
     }
     free(data);
-    free(ubx_payload);
     vTaskDelete(NULL);
 }

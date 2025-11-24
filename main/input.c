@@ -5,11 +5,15 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
+#include <string.h> // For strncpy
 
 static const char *TAG = "INPUT";
 
 // External function to trigger diagnostics
 extern void diagnostics_trigger(const char *event);
+
+// Shared buffer for UI update (polled by UI task)
+char g_input_event_str[32] = "Idle";
 
 // Button State Machine
 typedef enum {
@@ -22,6 +26,11 @@ typedef enum {
 static btn_state_t key_state = BTN_IDLE;
 static int64_t key_press_time = 0;
 static int64_t key_release_time = 0;
+
+static void report_event(const char *msg) {
+    diagnostics_trigger(msg);
+    strncpy(g_input_event_str, msg, sizeof(g_input_event_str) - 1);
+}
 
 static void process_key_logic(int key_level) {
     int64_t now = esp_timer_get_time() / 1000; // ms
@@ -45,37 +54,33 @@ static void process_key_logic(int key_level) {
                 key_release_time = now;
 
                 if (duration > 2000) {
-                    diagnostics_trigger("KEY: LONG PRESS");
-                    key_state = BTN_IDLE; // Reset
+                    report_event("KEY: LONG PRESS");
+                    key_state = BTN_IDLE;
                 } else if (duration > 500) {
-                    diagnostics_trigger("KEY: MEDIUM PRESS");
-                    key_state = BTN_IDLE; // Reset
+                    report_event("KEY: MEDIUM PRESS");
+                    key_state = BTN_IDLE;
                 }
-                // else: Short press candidate, wait for potential double click
+                // else: Short press candidate
             }
             break;
 
         case BTN_RELEASED:
-            // Waiting for double click or timeout
             if (pressed) {
                 // Second press
-                key_state = BTN_PRESSED; // Go back to pressed, but we need to track it's 2nd
-                // Simplified: Just trigger double click immediately on 2nd press for now?
-                // Or better: Treat as new press but check gap.
+                key_state = BTN_PRESSED;
                 int64_t gap = now - key_release_time;
-                if (gap < 300) { // 300ms double click window
-                    diagnostics_trigger("KEY: DOUBLE CLICK");
-                    key_state = BTN_WAIT_DOUBLE; // Wait for release of 2nd press to reset
+                if (gap < 300) {
+                    report_event("KEY: DOUBLE CLICK");
+                    key_state = BTN_WAIT_DOUBLE;
                 } else {
-                    // Too slow, previous was short press
-                    diagnostics_trigger("KEY: SHORT PRESS");
+                    report_event("KEY: SHORT PRESS");
                     key_state = BTN_PRESSED;
                     key_press_time = now;
                 }
             } else {
                 int64_t gap = now - key_release_time;
                 if (gap > 300) {
-                    diagnostics_trigger("KEY: SHORT PRESS");
+                    report_event("KEY: SHORT PRESS");
                     key_state = BTN_IDLE;
                 }
             }
@@ -91,7 +96,6 @@ static void process_key_logic(int key_level) {
 
 static void input_task(void *arg) {
     int enc_a_prev = gpio_get_level(ENC_A_PIN);
-    // int key_prev = gpio_get_level(KEY_MAIN_PIN); // Handled by state machine
 
     const TickType_t poll_delay = pdMS_TO_TICKS(10) > 0 ? pdMS_TO_TICKS(10) : 1;
 
@@ -100,19 +104,17 @@ static void input_task(void *arg) {
         int enc_b = gpio_get_level(ENC_B_PIN);
         int key = gpio_get_level(KEY_MAIN_PIN);
 
-        // Encoder Logic (Simplified)
         if (enc_a != enc_a_prev) {
-            if (enc_a == 0) { // Falling edge A
+            if (enc_a == 0) {
                 if (enc_b == 1) {
-                    diagnostics_trigger("ENC: CW");
+                    report_event("ENC: CW");
                 } else {
-                    diagnostics_trigger("ENC: CCW");
+                    report_event("ENC: CCW");
                 }
             }
             enc_a_prev = enc_a;
         }
 
-        // Key Logic
         process_key_logic(key);
 
         vTaskDelay(poll_delay);

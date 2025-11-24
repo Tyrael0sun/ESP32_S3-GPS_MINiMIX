@@ -1,6 +1,8 @@
 #include "sensors.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <math.h>
 
 static const char *TAG = "SENSORS";
@@ -9,11 +11,6 @@ static i2c_master_bus_handle_t bus_handle = NULL;
 static i2c_master_dev_handle_t imu_handle = NULL;
 static i2c_master_dev_handle_t mag_handle = NULL;
 static i2c_master_dev_handle_t baro_handle = NULL;
-
-// Alpha for Low Pass Filter (Gravity isolation)
-#define ALPHA_GRAVITY 0.2f
-static float g_grav_x = 0.0f, g_grav_y = 0.0f, g_grav_z = 0.0f;
-static bool grav_init = false;
 
 // BMP388 Floating Point Calibration Data
 struct bmp388_calib_float {
@@ -43,16 +40,16 @@ static esp_err_t i2c_register_device(uint8_t addr, i2c_master_dev_handle_t *hand
 }
 
 static esp_err_t read_register(i2c_master_dev_handle_t handle, uint8_t reg, uint8_t *data) {
-    return i2c_master_transmit_receive(handle, &reg, 1, data, 1, -1);
+    return i2c_master_transmit_receive(handle, &reg, 1, data, 1, pdMS_TO_TICKS(100));
 }
 
 static esp_err_t read_registers(i2c_master_dev_handle_t handle, uint8_t reg, uint8_t *data, size_t len) {
-    return i2c_master_transmit_receive(handle, &reg, 1, data, len, -1);
+    return i2c_master_transmit_receive(handle, &reg, 1, data, len, pdMS_TO_TICKS(100));
 }
 
 static esp_err_t write_register(i2c_master_dev_handle_t handle, uint8_t reg, uint8_t data) {
     uint8_t write_buf[2] = {reg, data};
-    return i2c_master_transmit(handle, write_buf, sizeof(write_buf), -1);
+    return i2c_master_transmit(handle, write_buf, sizeof(write_buf), pdMS_TO_TICKS(100));
 }
 
 static void bmp388_read_calib_data(void) {
@@ -75,21 +72,21 @@ static void bmp388_read_calib_data(void) {
         int8_t   p11 = data[20];
 
         // Convert to floating point with scaling factors (Bosch Datasheet)
-        calib_float.T1 = (double)t1 / 0.00390625f; // 2^-8
-        calib_float.T2 = (double)t2 / 1073741824.0f; // 2^30
-        calib_float.T3 = (double)t3 / 281474976710656.0f; // 2^48
+        calib_float.T1 = (double)t1 * 256.0;
+        calib_float.T2 = (double)t2 / 1073741824.0;
+        calib_float.T3 = (double)t3 / 281474976710656.0;
 
-        calib_float.P1 = (double)(p1 - 16384) / 1048576.0f; // (P1-2^14)/2^20
-        calib_float.P2 = (double)(p2 - 16384) / 536870912.0f; // (P2-2^14)/2^29
-        calib_float.P3 = (double)p3 / 4294967296.0f; // 2^32
-        calib_float.P4 = (double)p4 / 137438953472.0f; // 2^37
-        calib_float.P5 = (double)p5 / 0.125f; // 2^-3
-        calib_float.P6 = (double)p6 / 64.0f; // 2^6
-        calib_float.P7 = (double)p7 / 256.0f; // 2^8
-        calib_float.P8 = (double)p8 / 32768.0f; // 2^15
-        calib_float.P9 = (double)p9 / 281474976710656.0f; // 2^48
-        calib_float.P10 = (double)p10 / 281474976710656.0f; // 2^48
-        calib_float.P11 = (double)p11 / 36893488147419103232.0f; // 2^65
+        calib_float.P1 = (double)(p1 - 16384) / 1048576.0;
+        calib_float.P2 = (double)(p2 - 16384) / 536870912.0;
+        calib_float.P3 = (double)p3 / 4294967296.0;
+        calib_float.P4 = (double)p4 / 137438953472.0;
+        calib_float.P5 = (double)p5 * 8.0;
+        calib_float.P6 = (double)p6 / 64.0;
+        calib_float.P7 = (double)p7 / 256.0;
+        calib_float.P8 = (double)p8 / 32768.0;
+        calib_float.P9 = (double)p9 / 281474976710656.0;
+        calib_float.P10 = (double)p10 / 281474976710656.0;
+        calib_float.P11 = (double)p11 / 36893488147419103232.0;
 
         ESP_LOGI(TAG, "BMP388 Calibration Loaded (Float)");
     } else {
@@ -194,6 +191,8 @@ esp_err_t sensors_read_mag(float *mx, float *my, float *mz, float *temp) {
     *my = m_x * sensitivity * -1.0f;
     *mz = m_z * sensitivity * -1.0f;
 
+    // LIS2MDL Temp: 8 LSB/degC. Offset 25 degC = 0?
+    // Datasheet says 0 at 25C.
     *temp = (t_raw / 8.0f) + 25.0f;
 
     return ESP_OK;
@@ -256,24 +255,14 @@ esp_err_t sensors_read_baro(float *pressure, float *temp) {
 // Derived Calculations
 
 void sensors_calc_gravity_linear(float ax, float ay, float az, float *grav_x, float *grav_y, float *grav_z, float *lin_x, float *lin_y, float *lin_z) {
-    if (!grav_init) {
-        g_grav_x = ax;
-        g_grav_y = ay;
-        g_grav_z = az;
-        grav_init = true;
-    } else {
-        g_grav_x = ALPHA_GRAVITY * ax + (1.0f - ALPHA_GRAVITY) * g_grav_x;
-        g_grav_y = ALPHA_GRAVITY * ay + (1.0f - ALPHA_GRAVITY) * g_grav_y;
-        g_grav_z = ALPHA_GRAVITY * az + (1.0f - ALPHA_GRAVITY) * g_grav_z;
-    }
+    // Instantaneous reading for responsiveness, filter removed
+    *grav_x = ax;
+    *grav_y = ay;
+    *grav_z = az;
 
-    *grav_x = g_grav_x;
-    *grav_y = g_grav_y;
-    *grav_z = g_grav_z;
-
-    *lin_x = ax - g_grav_x;
-    *lin_y = ay - g_grav_y;
-    *lin_z = az - g_grav_z;
+    *lin_x = 0.0f;
+    *lin_y = 0.0f;
+    *lin_z = 0.0f;
 }
 
 float sensors_calc_heading(float mx, float my) {

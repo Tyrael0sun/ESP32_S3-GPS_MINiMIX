@@ -66,7 +66,7 @@ esp_err_t display_init(void) {
         .spi_mode = 0,
         .trans_queue_depth = 10,
         .on_color_trans_done = notify_lvgl_flush_ready,
-        .user_ctx = &disp_drv, // Pass the static driver instance
+        .user_ctx = &disp_drv,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)DISP_SPI_HOST, &io_config, &io_handle));
 
@@ -84,13 +84,13 @@ esp_err_t display_init(void) {
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, true)); // Often needed for ST7789
 
     // Spec: Vertical, Rotated 180.
-    // Standard vertical is usually 240x320. 180 rotation might mean mirror X and Y.
     ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, false)); // Keep vertical
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, true)); // 180 degree rotation typically means mirroring both axes or specific command.
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, true)); // 180 degree rotation
 
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
     // 5. Initialize Backlight (PWM)
+    // Set GPIO high to turn on backlight
     gpio_config_t bl_conf = {
         .pin_bit_mask = (1ULL << DISP_BL_PIN),
         .mode = GPIO_MODE_OUTPUT,

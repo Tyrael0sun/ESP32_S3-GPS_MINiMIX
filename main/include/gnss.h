@@ -2,6 +2,16 @@
 #define GNSS_H
 
 #include "esp_err.h"
+#include <stdint.h>
+
+typedef struct {
+    uint8_t sats;
+    float lat;
+    float lon;
+    bool fix;
+} gnss_data_t;
+
+extern volatile gnss_data_t g_gnss_data;
 
 /**
  * @brief Initialize GNSS UART and switch baud rate to 115200
