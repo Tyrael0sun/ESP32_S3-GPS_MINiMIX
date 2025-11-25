@@ -12,6 +12,12 @@ static i2c_master_dev_handle_t imu_handle = NULL;
 static i2c_master_dev_handle_t mag_handle = NULL;
 static i2c_master_dev_handle_t baro_handle = NULL;
 
+// Alpha for Low Pass Filter (Gravity isolation)
+// 5Hz update -> dt=0.2s. RC=0.5s -> alpha ~ 0.28
+#define ALPHA_GRAVITY 0.3f
+static float g_grav_x = 0.0f, g_grav_y = 0.0f, g_grav_z = 0.0f;
+static bool grav_init = false;
+
 // BMP388 Floating Point Calibration Data
 struct bmp388_calib_float {
     double T1, T2, T3;
@@ -71,7 +77,7 @@ static void bmp388_read_calib_data(void) {
         int8_t   p10 = data[19];
         int8_t   p11 = data[20];
 
-        // Convert to floating point with scaling factors (Bosch Datasheet)
+        // Convert to floating point with scaling factors (Multiplication based on Bosch Datasheet 3.11.1)
         calib_float.T1 = (double)t1 * 256.0;
         calib_float.T2 = (double)t2 / 1073741824.0;
         calib_float.T3 = (double)t3 / 281474976710656.0;
@@ -255,14 +261,24 @@ esp_err_t sensors_read_baro(float *pressure, float *temp) {
 // Derived Calculations
 
 void sensors_calc_gravity_linear(float ax, float ay, float az, float *grav_x, float *grav_y, float *grav_z, float *lin_x, float *lin_y, float *lin_z) {
-    // Instantaneous reading for responsiveness, filter removed
-    *grav_x = ax;
-    *grav_y = ay;
-    *grav_z = az;
+    if (!grav_init) {
+        g_grav_x = ax;
+        g_grav_y = ay;
+        g_grav_z = az;
+        grav_init = true;
+    } else {
+        g_grav_x = ALPHA_GRAVITY * ax + (1.0f - ALPHA_GRAVITY) * g_grav_x;
+        g_grav_y = ALPHA_GRAVITY * ay + (1.0f - ALPHA_GRAVITY) * g_grav_y;
+        g_grav_z = ALPHA_GRAVITY * az + (1.0f - ALPHA_GRAVITY) * g_grav_z;
+    }
 
-    *lin_x = 0.0f;
-    *lin_y = 0.0f;
-    *lin_z = 0.0f;
+    *grav_x = g_grav_x;
+    *grav_y = g_grav_y;
+    *grav_z = g_grav_z;
+
+    *lin_x = ax - g_grav_x;
+    *lin_y = ay - g_grav_y;
+    *lin_z = az - g_grav_z;
 }
 
 float sensors_calc_heading(float mx, float my) {
